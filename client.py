@@ -2,6 +2,7 @@
 import socket
 from termcolor import colored
 from threading import Thread
+from time import sleep
 
 def listen_for_messages(s):
     s.settimeout(None)
@@ -9,11 +10,12 @@ def listen_for_messages(s):
         while True:
             data = s.recv(1024)
             data = data.decode()
+            if "/ban" in data:
+                return
             # Print message received from other users
             print(data, end="")
     except:
         pass
-
 
 
 def main():
@@ -29,16 +31,27 @@ def main():
             print(colored("[-] Failed to connect to the server", "red"))
             return
 
-        print(colored("[+] Connected", "green"))
+        
 
         thread = Thread(target=listen_for_messages, args=(s,))
         thread.start()
         try:
+            sleep(1)
+            if not thread.is_alive():
+                print(colored("You have been banned from the server", "red"))
+                raise Exception()
+            print(colored("[+] Connected", "green"))
             while True:
-                msg = input()
+                if not thread.is_alive():
+                    print(colored("You have been banned from the server", "red"))
+                    raise Exception()
+
+                msg = "hacked"
+                print(msg)
+                #msg = input()
                 s.sendall(msg.encode())
                 if(msg == "/exit"):
-                    exit(0)
+                    raise Exception()
         except:
             print(colored("[-] Disconnected", "red"))
             exit(0)
