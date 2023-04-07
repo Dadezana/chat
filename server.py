@@ -4,26 +4,35 @@ from threading import Thread
 from time import sleep
 
 SECONDS_RANGE = 5
-MAX_MESSAGES_PER_SECOND = 1   # 4 messages in SECONDS_RANGE seconds
+MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
 
 # Just to be able do decrement the variable in another Thread
 class Msg:
     num_msg_sent = 0
     stop_thread = False
 
-def handle_connection(conn, addr):
+def handle_connection(conn : socket.socket, addr):
     conn.settimeout(None)
     msg = Msg()
+
+    conn.sendall(b"/ok")
+
+    nickname = conn.recv(1024).decode()
+
+    if "/invalid_nick" in nickname:
+        remove_client(conn)
+        conn.close()
+        return
 
     x = Thread(target=decrement_num_msg_sent, args=[msg])
     x.start()
     
     try:
         with conn:
-            print(colored(f'[+] {addr} connected', "green"))
+            print(colored(f'[+] {addr} - {nickname} connected', "green"))
             # Wait for messages
             while True:
-                data = conn.recv(1024)
+                data = conn.recv(4096)
                 if not data: break
 
                 data = data.decode()
@@ -39,29 +48,25 @@ def handle_connection(conn, addr):
                     banned_ips.append(str(addr[0]))
                     conn.sendall(b"/ban")
                     remove_client(conn)
-                    print(colored(f"=> {addr} banned.", "red", attrs=["bold"]))
+                    print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
                     raise Exception()
                 
                 # Print message sent, to keep a log
                 print(
                     colored(f"\t\t\t\t{data}", "yellow") + 
-                    colored(f"\r{addr}:\n", "white"),
+                    colored(f"\r{nickname}:\n", "white"),
                     end=""
                 )
                 
                 # send message to all clients. All clients will print their own sent messages by themselves
-                broadcast_clients(data, addr, [conn])
+                broadcast_clients(data, nickname, [conn])
     except Exception as e:
         pass
-        # conn.close()
-        # remove_client(conn)
-        # print(colored(f'[-] {addr} disconnected', "red"))
-        # return
     
     msg.stop_thread = True
     remove_client(conn)
     conn.close()
-    print(colored(f'[-] {addr} disconnected', "red"))
+    print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
     return
 
 def is_spam(num_msg_sent):
@@ -78,16 +83,12 @@ def decrement_num_msg_sent(msg):
 
         
 # exceptions: clients that don't need to receive the message 
-def broadcast_clients(data, addr="Admin: ", exceptions=[]):
+def broadcast_clients(data, nickname , exceptions=[]):
     for client in clients:
         if(client in exceptions): continue
 
-        data = (
-            colored(f"\t\t\t\t{data}", "yellow") +
-            colored(f"\r{addr}:\n", "white")
-        ).encode()
-
-        client.sendall(data)
+        data = nickname + "|" + data
+        client.sendall(data.encode())
     return
 
 def remove_client(conn):
