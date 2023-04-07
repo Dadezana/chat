@@ -15,14 +15,15 @@ def handle_connection(conn : socket.socket, addr):
     conn.settimeout(None)
     msg = Msg()
 
-    conn.sendall(b"/ok")
-
     nickname = conn.recv(1024).decode()
 
     if "/invalid_nick" in nickname:
-        remove_client(conn)
+        remove_client(conn, nickname)
         conn.close()
         return
+
+    users.append(nickname)
+    broadcast_users()
 
     x = Thread(target=decrement_num_msg_sent, args=[msg])
     x.start()
@@ -32,14 +33,8 @@ def handle_connection(conn : socket.socket, addr):
             print(colored(f'[+] {addr} - {nickname} connected', "green"))
             # Wait for messages
             while True:
-                data = conn.recv(4096)
+                data = conn.recv(4096).decode()
                 if not data: break
-
-                data = data.decode()
-
-                if (data == "/exit"):
-                    conn.sendall(b"")
-                    raise Exception() # to print disconnected message and close the thread
 
                 msg.num_msg_sent += 1
 
@@ -47,7 +42,7 @@ def handle_connection(conn : socket.socket, addr):
                 if is_spam(msg.num_msg_sent):
                     banned_ips.append(str(addr[0]))
                     conn.sendall(b"/ban")
-                    remove_client(conn)
+                    # remove_client(conn, nickname)
                     print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
                     raise Exception()
                 
@@ -64,8 +59,9 @@ def handle_connection(conn : socket.socket, addr):
         pass
     
     msg.stop_thread = True
-    remove_client(conn)
+    remove_client(conn, nickname)
     conn.close()
+    broadcast_users()
     print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
     return
 
@@ -80,20 +76,23 @@ def decrement_num_msg_sent(msg):
         if msg.stop_thread:
             return
     
-
+def broadcast_users():
+    data = ",".join(users)
+    broadcast_clients(data, "/new_user")
         
 # exceptions: clients that don't need to receive the message 
 def broadcast_clients(data, nickname , exceptions=[]):
     for client in clients:
         if(client in exceptions): continue
 
-        data = nickname + "|" + data
-        client.sendall(data.encode())
+        _data = nickname + "," + data
+        client.sendall(_data.encode())
     return
 
-def remove_client(conn):
+def remove_client(conn, nick):
     try:
         clients.remove(conn)
+        users.remove(nick)
     except:
         pass
 
@@ -104,24 +103,37 @@ def main():
     PORT = 58465              # Arbitrary port
 
     global clients
+    global users
     clients = []
+    users = []
 
     global banned_ips
     banned_ips = []
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
-        while True:
-            s.listen(1)
-            conn, addr = s.accept()
-            if str(addr[0]) in banned_ips:
-                conn.sendall(b"/ban")
-                conn.close()
-                continue
+        print(colored("=> Server started", "green"))
+        try:
+            while True:
+                s.listen(1)
+                conn, addr = s.accept()
+                if str(addr[0]) in banned_ips:
+                    conn.sendall(b"/ban")
+                    conn.close()
+                    continue
 
-            clients.append(conn)
-            Thread(target=handle_connection, args=(conn, addr)).start()
+                clients.append(conn)
+                conn.sendall(b"/ok")
+                # send users list to new user
+                # data = "/new_user," + ",".join(users)
+                # conn.sendall(data.encode())
+
+                Thread(target=handle_connection, args=(conn, addr)).start()
         
+        except KeyboardInterrupt:
+            print(colored("=> Server stopped", "red"))
+        
+        exit(0)
 
 
 if __name__ == '__main__':

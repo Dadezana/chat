@@ -9,22 +9,28 @@ from tkinter import simpledialog, Tk
 class UserBannedException(Exception):
     pass
 
+
 def listen_for_messages(s : socket.socket):
-    # s.settimeout(None)
+    s.settimeout(1)
     while not exit_app:
         try:
-            data = s.recv(4096)
-            data = data.decode()
-            nickname = data.split("|")[0]
-            data = data.split("|")[1]
-            print(f"{nickname}: {data}")
+            t_nickname, *data = s.recv(4096).decode().split(",")
+            data = list(data)
         
         except Exception:
             continue
         
-        # Print message received from other users
-        nickname = f"({nickname})".ljust(NICKNAME_WIDTH)
-        win["-CHAT HISTORY-"].update(f"{nickname}", text_color_for_value='#E2CF03', append=True)
+        # in this case "nickname" is a command
+        if t_nickname == "/new_user":
+            users = list(user for user in data)
+            sleep(1)
+            win["-USERS-"].update(users)
+            continue
+        
+        data = "".join(data)        # from list to string
+        # Print message received
+        t_nickname = f"({t_nickname})".ljust(NICKNAME_WIDTH)
+        win["-CHAT HISTORY-"].update(f"{t_nickname}", text_color_for_value='#E2CF03', append=True)
         win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
 
 def create_window():
@@ -34,11 +40,10 @@ def create_window():
     BUTTON_WIDTH = 25
     BUTTON_HEIGHT = 18
     TEXT_PAD = (0,5)
-
     chat_row = [
         [
             sg.Multiline(key="-CHAT HISTORY-", size=(CHAT_WIDTH, CHAT_HEIGHT), text_color="white", background_color="#222", font=("default", 11), pad=TEXT_PAD, focus=False, no_scrollbar=True, disabled=True),
-            sg.Listbox(["Connected Users", "Dadezana", "Mario", "Giorgio"], key="-USERS-", size=(15, CHAT_HEIGHT+8), no_scrollbar=True),
+            sg.Listbox(users, key="-USERS-", size=(15, CHAT_HEIGHT+8), no_scrollbar=True),
         ]
     ]
 
@@ -93,7 +98,7 @@ def connect_to_server():
         
     try:
         s.connect((HOST, PORT))
-        data = s.recv(1024).decode()
+        data = s.recv(1024).decode()    # if not banned it contains the users
         if data == "/ban":
             raise UserBannedException()
         
@@ -105,20 +110,25 @@ def connect_to_server():
         print(colored("[-] You have been banned from the server", "red"))
         return False
         
+    # global users
+    # users = []
+    #! users = data.split(",")[1:] # this variable is passed to the "-USER-" Listbox
+    #! if users[0] == '':
+    #!     users = []      # avoid an empty line being displayed in the "-USER-" Listbox
+
     msg = Tk()
     msg.withdraw()
 
     global nickname
-    nickname = str(simpledialog.askstring("Nickname", "Enter your nickname: ", parent=msg))
-    if(nickname.strip() == ""):
+    nickname = simpledialog.askstring("Nickname", "Enter your nickname: ", parent=msg)
+    if (nickname == None):
+        send_message("/invalid_nick")
+        return False
+    
+    elif(nickname.strip() == ""):
         print(colored("[-] Nickname not valid", "red"))
         send_message("/invalid_nick")
         return False
-    
-    elif (nickname == None):
-        send_message("/invalid_nick")
-        return False
-    
 
     send_message(nickname)
     return True
@@ -135,15 +145,17 @@ def main():
     global NICKNAME_WIDTH
     NICKNAME_WIDTH = 15     # space taken up by nickname
 
+    global users
+    users = []
+
     if not connect_to_server():
         exit(0)
 
     print(colored("[+] Connected", "green"))
 
+    create_window()
     listen_thread = Thread(target=listen_for_messages, args=(s,))
     listen_thread.start()
-
-    create_window()
     handle_window()
 
 
