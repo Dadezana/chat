@@ -23,7 +23,7 @@ def handle_connection(conn : socket.socket, addr):
         return
 
     users.append(nickname)
-    broadcast_users()
+    broadcast_clients("/new_user", nickname)
 
     x = Thread(target=decrement_num_msg_sent, args=[msg])
     x.start()
@@ -41,8 +41,7 @@ def handle_connection(conn : socket.socket, addr):
                 # Check for number of messages sent within SECONDS_RANGE seconds
                 if is_spam(msg.num_msg_sent):
                     banned_ips.append(str(addr[0]))
-                    conn.sendall(b"/ban")
-                    # remove_client(conn, nickname)
+                    broadcast_clients("/ban", nickname)
                     print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
                     raise Exception()
                 
@@ -54,14 +53,14 @@ def handle_connection(conn : socket.socket, addr):
                 )
                 
                 # send message to all clients. All clients will print their own sent messages by themselves
-                broadcast_clients(data, nickname, [conn])
+                broadcast_clients(nickname, data, [conn])
     except Exception as e:
         pass
     
     msg.stop_thread = True
     remove_client(conn, nickname)
     conn.close()
-    broadcast_users()
+    broadcast_clients("/user_left", nickname, [conn])
     print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
     return
 
@@ -76,12 +75,13 @@ def decrement_num_msg_sent(msg):
         if msg.stop_thread:
             return
     
+# send users list to clients
 def broadcast_users():
     data = ",".join(users)
-    broadcast_clients(data, "/new_user")
+    broadcast_clients("/new_user", data)
         
 # exceptions: clients that don't need to receive the message 
-def broadcast_clients(data, nickname , exceptions=[]):
+def broadcast_clients(nickname, data, exceptions=[]):
     for client in clients:
         if(client in exceptions): continue
 
@@ -123,10 +123,12 @@ def main():
                     continue
 
                 clients.append(conn)
-                conn.sendall(b"/ok")
+                # conn.sendall(b"/ok")
                 # send users list to new user
-                # data = "/new_user," + ",".join(users)
-                # conn.sendall(data.encode())
+                # broadcast_users()
+                data = "/new_user," + ",".join(users)
+                print(f"Sent {data} to new user")
+                conn.sendall(data.encode())
 
                 Thread(target=handle_connection, args=(conn, addr)).start()
         

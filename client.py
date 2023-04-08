@@ -9,22 +9,41 @@ from tkinter import simpledialog, Tk
 class UserBannedException(Exception):
     pass
 
+global users
+users = []
 
 def listen_for_messages(s : socket.socket):
     s.settimeout(1)
+    global users
+    print(f"users: {users}")
+    win["-USERS-"].update(users)
     while not exit_app:
         try:
-            t_nickname, *data = s.recv(4096).decode().split(",")
-            data = list(data)
+            t_nickname, data = s.recv(4096).decode().split(",")
+            print(data)
+        except Exception as e:
+            continue
+
+        # /ban will always contain max 1 user
+        if t_nickname == "/ban":
+            banned = True
+            nick = "You have" if "".join(data) == nickname else f"{data[0]} has"
+            win["-CHAT HISTORY-"].update(f"=> {nick} been banned from the server\n", text_color_for_value="red", append=True)
+            return
         
-        except Exception:
+        # /new_user will always contain max 1 user
+        if t_nickname == "/new_user":            
+            users.append(data)
+
+            win["-USERS-"].update(users)
+            win["-CHAT HISTORY-"].update(f"=> {data} joined the chat\n", text_color_for_value="green", append=True)
             continue
         
-        # in this case "nickname" is a command
-        if t_nickname == "/new_user":
-            users = list(user for user in data)
-            sleep(1)
+        # /user_left will always contain max 1 user
+        elif t_nickname == "/user_left":
+            users.remove(data)
             win["-USERS-"].update(users)
+            win["-CHAT HISTORY-"].update(f"=> {data} left the chat\n", text_color_for_value="red", append=True)
             continue
         
         data = "".join(data)        # from list to string
@@ -84,7 +103,8 @@ def handle_window():
             win["-CHAT HISTORY-"].update(f"{nick}", text_color_for_value='#E2CF03', append=True)
             win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
 
-            Thread(target=send_message, args=[data,]).start()
+            if not banned:
+                Thread(target=send_message, args=[data,]).start()
             
     win.close()
     
@@ -98,8 +118,8 @@ def connect_to_server():
         
     try:
         s.connect((HOST, PORT))
-        data = s.recv(1024).decode()    # if not banned it contains the users
-        if data == "/ban":
+        command, *data = s.recv(1024).decode().split(",")    # if not banned it contains the users
+        if command == "/ban":
             raise UserBannedException()
         
     except ConnectionRefusedError:
@@ -109,12 +129,12 @@ def connect_to_server():
     except UserBannedException:
         print(colored("[-] You have been banned from the server", "red"))
         return False
-        
-    # global users
-    # users = []
-    #! users = data.split(",")[1:] # this variable is passed to the "-USER-" Listbox
-    #! if users[0] == '':
-    #!     users = []      # avoid an empty line being displayed in the "-USER-" Listbox
+
+    global users
+    users = list(user for user in data)
+    if users[0] == '':
+        users = []
+    print(f"Users: {users}")
 
     msg = Tk()
     msg.withdraw()
@@ -145,8 +165,8 @@ def main():
     global NICKNAME_WIDTH
     NICKNAME_WIDTH = 15     # space taken up by nickname
 
-    global users
-    users = []
+    global banned
+    banned = False
 
     if not connect_to_server():
         exit(0)
