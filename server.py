@@ -123,11 +123,7 @@ def main():
                     continue
 
                 clients.append(conn)
-                # conn.sendall(b"/ok")
-                # send users list to new user
-                # broadcast_users()
                 data = "/new_user," + ",".join(users)
-                print(f"Sent {data} to new user")
                 conn.sendall(data.encode())
 
                 Thread(target=handle_connection, args=(conn, addr)).start()

@@ -14,20 +14,20 @@ users = []
 
 def listen_for_messages(s : socket.socket):
     s.settimeout(1)
+
     global users
-    print(f"users: {users}")
     win["-USERS-"].update(users)
+
     while not exit_app:
         try:
             t_nickname, data = s.recv(4096).decode().split(",")
-            print(data)
         except Exception as e:
             continue
 
         # /ban will always contain max 1 user
         if t_nickname == "/ban":
             banned = True
-            nick = "You have" if "".join(data) == nickname else f"{data[0]} has"
+            nick = "You have" if data == nickname else f"{data} has"
             win["-CHAT HISTORY-"].update(f"=> {nick} been banned from the server\n", text_color_for_value="red", append=True)
             return
         
@@ -46,7 +46,6 @@ def listen_for_messages(s : socket.socket):
             win["-CHAT HISTORY-"].update(f"=> {data} left the chat\n", text_color_for_value="red", append=True)
             continue
         
-        data = "".join(data)        # from list to string
         # Print message received
         t_nickname = f"({t_nickname})".ljust(NICKNAME_WIDTH)
         win["-CHAT HISTORY-"].update(f"{t_nickname}", text_color_for_value='#E2CF03', append=True)
@@ -134,7 +133,6 @@ def connect_to_server():
     users = list(user for user in data)
     if users[0] == '':
         users = []
-    print(f"Users: {users}")
 
     msg = Tk()
     msg.withdraw()
