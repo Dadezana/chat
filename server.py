@@ -2,6 +2,7 @@ import socket
 from termcolor import colored
 from threading import Thread
 from time import sleep
+import rsa
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -11,18 +12,21 @@ class Msg:
     num_msg_sent = 0
     stop_thread = False
 
-def handle_connection(conn : socket.socket, addr):
+def handle_connection(client : dict, addr, conn : socket.socket = None):
+    conn = client["conn"]
     conn.settimeout(None)
-    msg = Msg()
+    msg = Msg()             # todo make num_msg_sent part of client's dictionary
 
-    nickname = conn.recv(1024).decode()
+    global private_key
+    nickname = rsa.decrypt(conn.recv(1024), private_key).decode()
 
     if "/invalid_nick" in nickname:
-        remove_client(conn, nickname)
+        remove_client(client)
         conn.close()
         return
 
     users.append(nickname)
+    client["nickname"] = nickname
     broadcast_clients("/new_user", nickname)
 
     x = Thread(target=decrement_num_msg_sent, args=[msg])
@@ -33,7 +37,7 @@ def handle_connection(conn : socket.socket, addr):
             print(colored(f'[+] {addr} - {nickname} connected', "green"))
             # Wait for messages
             while True:
-                data = conn.recv(4096).decode()
+                data = rsa.decrypt(conn.recv(4096), private_key).decode()
                 if not data: break
 
                 msg.num_msg_sent += 1
@@ -53,12 +57,12 @@ def handle_connection(conn : socket.socket, addr):
                 )
                 
                 # send message to all clients. All clients will print their own sent messages by themselves
-                broadcast_clients(nickname, data, [conn])
+                broadcast_clients(nickname, data, [client])
     except Exception as e:
         pass
     
     msg.stop_thread = True
-    remove_client(conn, nickname)
+    remove_client(client)
     conn.close()
     broadcast_clients("/user_left", nickname, [conn])
     print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
@@ -68,17 +72,10 @@ def is_spam(num_msg_sent):
     return (num_msg_sent / SECONDS_RANGE) > MAX_MESSAGES_PER_SECOND
 
 def decrement_num_msg_sent(msg):
-    while True:
+    while not msg.stop_thread:
         sleep(SECONDS_RANGE)
         if msg.num_msg_sent > 0:
             msg.num_msg_sent -= 1
-        if msg.stop_thread:
-            return
-    
-# send users list to clients
-def broadcast_users():
-    data = ",".join(users)
-    broadcast_clients("/new_user", data)
         
 # exceptions: clients that don't need to receive the message 
 def broadcast_clients(nickname, data, exceptions=[]):
@@ -86,16 +83,29 @@ def broadcast_clients(nickname, data, exceptions=[]):
         if(client in exceptions): continue
 
         _data = nickname + "," + data
-        client.sendall(_data.encode())
+        client["conn"].sendall( rsa.encrypt(_data.encode(), client["key"]) )
     return
 
-def remove_client(conn, nick):
+def remove_client(client : dict):
     try:
-        clients.remove(conn)
+        nick = client["nickname"]
+        clients.remove(client)
         users.remove(nick)
     except:
         pass
 
+def exchange_keys(conn : socket.socket):
+    global public_key, clients
+
+    conn.sendall( public_key.save_pkcs1() )
+    client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
+    client = {
+        "conn": conn,
+        "nickname": "",     # nickname is defined in handle_connection()
+        "key": client_key
+    }
+
+    clients.append(client)
 
 
 def main():
@@ -104,11 +114,14 @@ def main():
 
     global clients
     global users
-    clients = []
+    clients = []                # array of dictionaries
     users = []
 
     global banned_ips
     banned_ips = []
+
+    global public_key, private_key
+    public_key, private_key = rsa.newkeys(1024)
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
@@ -117,16 +130,21 @@ def main():
             while True:
                 s.listen(1)
                 conn, addr = s.accept()
+
+                conn.sendall( public_key.save_pkcs1() )
+
                 if str(addr[0]) in banned_ips:
-                    conn.sendall(b"/ban")
+                    conn.sendall( rsa.encrypt(b"/ban", public_key) )
                     conn.close()
                     continue
 
-                clients.append(conn)
+                
+                exchange_keys(conn)
+                client = clients[-1]
                 data = "/new_user," + ",".join(users)
-                conn.sendall(data.encode())
+                conn.sendall( rsa.encrypt(data.encode(), client["key"]) )
 
-                Thread(target=handle_connection, args=(conn, addr)).start()
+                Thread(target=handle_connection, args=(client, addr)).start()
         
         except KeyboardInterrupt:
             print(colored("=> Server stopped", "red"))

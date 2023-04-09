@@ -2,9 +2,9 @@
 import socket
 from termcolor import colored
 from threading import Thread
-from time import sleep
 import PySimpleGUI as sg
 from tkinter import simpledialog, Tk
+import rsa
 
 class UserBannedException(Exception):
     pass
@@ -15,12 +15,12 @@ users = []
 def listen_for_messages(s : socket.socket):
     s.settimeout(1)
 
-    global users
+    global users, private_key
     win["-USERS-"].update(users)
 
     while not exit_app:
         try:
-            t_nickname, data = s.recv(4096).decode().split(",")
+            t_nickname, data = rsa.decrypt(s.recv(4096), private_key).decode().split(",")
         except Exception as e:
             continue
 
@@ -108,6 +108,16 @@ def handle_window():
     win.close()
     
 
+def exchange_keys():
+    global public_key, private_key, server_key, s
+    
+    public_key, private_key = rsa.newkeys(1024)
+
+    server_key = rsa.PublicKey.load_pkcs1( s.recv(1024) )
+
+    s.sendall(public_key.save_pkcs1())
+
+
 def connect_to_server():
     HOST = '127.0.0.1'    # The remote host
     PORT = 58465              # The same port used by the server
@@ -117,7 +127,10 @@ def connect_to_server():
         
     try:
         s.connect((HOST, PORT))
-        command, *data = s.recv(1024).decode().split(",")    # if not banned it contains the users
+
+        exchange_keys()
+
+        command, *data = rsa.decrypt(s.recv(1024), private_key).decode().split(",")    # if not banned it contains the users
         if command == "/ban":
             raise UserBannedException()
         
@@ -139,11 +152,7 @@ def connect_to_server():
 
     global nickname
     nickname = simpledialog.askstring("Nickname", "Enter your nickname: ", parent=msg)
-    if (nickname == None):
-        send_message("/invalid_nick")
-        return False
-    
-    elif(nickname.strip() == ""):
+    if (nickname == None or nickname.strip() == ""):
         print(colored("[-] Nickname not valid", "red"))
         send_message("/invalid_nick")
         return False
@@ -153,8 +162,8 @@ def connect_to_server():
 
 
 def send_message(msg):
-    global s
-    s.sendall(msg.encode())
+    global s, server_key
+    s.sendall(rsa.encrypt(msg.encode(), server_key))
 
 def main():
     global exit_app
@@ -175,8 +184,6 @@ def main():
     listen_thread = Thread(target=listen_for_messages, args=(s,))
     listen_thread.start()
     handle_window()
-
-
 
 
 if __name__ == '__main__':
