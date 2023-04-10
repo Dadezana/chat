@@ -58,7 +58,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
     msg = Msg()             # todo make num_msg_sent part of client's dictionary
 
     global private_key, RSA_KEY_LEN
-    nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode()
+    nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
 
     if "/invalid_nick" in nickname:
         remove_client(client)
@@ -77,7 +77,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
             print(colored(f'[+] {addr} - {nickname} connected', "green"))
             # Wait for messages
             while True:
-                data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode()    # 128 max bytes decryptable with 1024 rsa key
+                data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')    # 128 max bytes decryptable with 1024 rsa key
                 if not data: continue
 
                 if data.startswith("/output,"):
