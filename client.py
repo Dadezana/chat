@@ -85,7 +85,7 @@ def create_window():
     TEXT_PAD = (0,5)
     chat_row = [
         [
-            sg.Multiline(key="-CHAT HISTORY-", size=(CHAT_WIDTH, CHAT_HEIGHT), text_color="white", background_color="#222", font=("default", 11), pad=TEXT_PAD, focus=False, no_scrollbar=True, disabled=True),
+            sg.Multiline(key="-CHAT HISTORY-", size=(CHAT_WIDTH, CHAT_HEIGHT), text_color="white", background_color="#222", font=("default", 11), pad=TEXT_PAD, focus=False, no_scrollbar=True, disabled=True, autoscroll=True),
             sg.Listbox(users, key="-USERS-", size=(15, CHAT_HEIGHT), no_scrollbar=True),
         ]
     ]
@@ -126,11 +126,14 @@ def handle_window():
 
             if data.strip() == "" or data == None:
                 continue
-            win["-CHAT HISTORY-"].update(f"{nick}", text_color_for_value='#E2CF03', append=True)
-            win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
+                
+            MAX_DATA_LEN = 110                  # rsa with RSA_KEY_LEN key cannot encrypt more than MAX_DATA_LEN bytes
+            if(len(data) < MAX_DATA_LEN):
+                win["-CHAT HISTORY-"].update(f"{nick}", text_color_for_value='#E2CF03', append=True)
+                win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
 
             if not banned:
-                Thread(target=send_message, args=[data,]).start()
+                Thread(target=send_message, args=(data,)).start()
             
     win.close()
     
@@ -189,8 +192,20 @@ def connect_to_server():
 
 
 def send_message(msg):
-    global s, server_key
-    s.sendall(rsa.encrypt(msg.encode(), server_key))
+    global s, server_key, RSA_KEY_LEN
+
+    try:
+        s.sendall(rsa.encrypt(msg.encode(), server_key))
+
+    except BrokenPipeError as bp:
+        win["-CHAT HISTORY-"].update("Connection closed\n", text_color_for_value="red", append=True)
+
+    except OverflowError as oe:
+        win["-CHAT HISTORY-"].update("Message too long. Max 110 char allowed\n", text_color_for_value="red", append=True)
+    
+    except ConnectionResetError as cre:
+        win["-CHAT HISTORY-"].update("Connection closed by server\n", text_color_for_value="red", append=True)
+
 
 def main():
     global exit_app
