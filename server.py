@@ -7,11 +7,6 @@ import rsa
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
 
-# Just to be able do decrement the variable in another Thread
-class Msg:
-    num_msg_sent = 0
-    stop_thread = False
-
 def target_handler():
 
     while True:
@@ -57,16 +52,13 @@ def target_handler():
         elif cmd.startswith("send "):
 
             msg = " ".join( cmd.split(" ")[1:-1] )
-
             try:
                 user = cmd.split(" ")[-1]
-
                 if user == "*":
                     broadcast_clients("admin", msg)
                     continue
                 
                 user_num = int(user)
-
                 if user_num >= len(clients):
                     print("This user does not exists")
                     continue
@@ -93,12 +85,12 @@ def send_message(data, client):
     client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
 
 def handle_connection(client : dict, conn : socket.socket = None):
+    global private_key, RSA_KEY_LEN, stop_thread
+
     conn = client["conn"]
     addr = client["addr"]
     conn.settimeout(None)
-    msg = Msg()             # todo make num_msg_sent part of client's dictionary
 
-    global private_key, RSA_KEY_LEN
     nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
 
     if not is_nickname_valid(nickname):
@@ -113,39 +105,44 @@ def handle_connection(client : dict, conn : socket.socket = None):
     client["nickname"] = nickname
     broadcast_clients("/new_user", nickname)
 
-    x = Thread(target=decrement_num_msg_sent, args=[msg])
+    x = Thread(target=decrement_num_msg_sent, args=[client])
     x.start()
+
+    conn.settimeout(1)
     
     try:
-        with conn:
-            print(colored(f'[+] {addr} - {nickname} connected', "green"))
-            # Wait for messages
-            while True:
+        print(colored(f'[+] {addr} - {nickname} connected', "green"))
+        # Wait for messages
+        while True:
+            try:
                 data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')    # 128 max bytes decryptable with 1024 rsa key
-                if not data: continue
+            except TimeoutError:
+                continue
+            
+            if not data: continue
 
-                if data.startswith("/output,"):
-                    print(data[8:], end="")
-                    continue
+            if data.startswith("/output,"):
+                print(data[8:], end="")
+                continue
 
-                msg.num_msg_sent += 1
+            client["num_msg_sent"] += 1
 
-                # Check for number of messages sent within SECONDS_RANGE seconds
-                if is_spam(msg.num_msg_sent):
-                    banned_ips.append(str(addr[0]))
-                    broadcast_clients("/ban", nickname)
-                    print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
-                    raise Exception()
-                
-                with open("msg.txt", "a") as log_file:
-                    log_file.write(f"{nickname}: \t{data}\n")
-                
-                # send message to all clients. All clients will print their own sent messages by themselves
-                broadcast_clients(nickname, data, [client])
+            # Check for number of messages sent within SECONDS_RANGE seconds
+            if is_spam( client["num_msg_sent"] ):
+                banned_ips.append(str(addr[0]))
+                broadcast_clients("/ban", nickname)
+                print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
+                raise Exception()
+            
+            with open("msg.txt", "a") as log_file:
+                log_file.write(f"{nickname}: \t{data}\n")
+            
+            # send message to all clients. All clients will print their own sent messages by themselves
+            broadcast_clients(nickname, data, [client])
     except Exception as e:
         pass
     
-    msg.stop_thread = True
+    stop_thread = True
     remove_client(client)
     conn.close()
     broadcast_clients("/user_left", nickname, [conn])
@@ -166,11 +163,12 @@ def is_nickname_valid(nick : str):
 def is_spam(num_msg_sent):
     return (num_msg_sent / SECONDS_RANGE) > MAX_MESSAGES_PER_SECOND
 
-def decrement_num_msg_sent(msg):
-    while not msg.stop_thread:
+def decrement_num_msg_sent(client):
+    global stop_thread
+    while not stop_thread:
         sleep(SECONDS_RANGE)
-        if msg.num_msg_sent > 0:
-            msg.num_msg_sent -= 1
+        if client["num_msg_sent"] > 0:
+            client["num_msg_sent"] -= 1
         
 # exceptions: clients that don't need to receive the message 
 def broadcast_clients(nickname, data, exceptions=[]):
@@ -199,7 +197,8 @@ def exchange_keys(conn : socket.socket):
         "conn": conn,
         "addr": None,
         "nickname": "",     # nickname is defined in handle_connection()
-        "key": client_key
+        "key": client_key,
+        "num_msg_sent": 0
     }
 
     clients.append(client)
@@ -222,6 +221,9 @@ def main():
 
     global public_key, private_key
     public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
+
+    global stop_thread
+    stop_thread = False
 
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
