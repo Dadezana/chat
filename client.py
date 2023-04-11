@@ -124,6 +124,8 @@ def handle_window():
             global nickname
             nick = f"({nickname})".ljust(NICKNAME_WIDTH)
 
+            if data.strip() == "" or data == None:
+                continue
             win["-CHAT HISTORY-"].update(f"{nick}", text_color_for_value='#E2CF03', append=True)
             win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
 
