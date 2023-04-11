@@ -153,12 +153,15 @@ def handle_connection(client : dict, conn : socket.socket = None):
     return
 
 def is_nickname_valid(nick : str):
+    global users
     return not(
         nick.strip() == "" or 
         nick == None or 
         nick.startswith("/") or
-        nick.strip() == "admin"
+        nick.strip() == "admin" or
+        nick in users
     )
+
 
 def is_spam(num_msg_sent):
     return (num_msg_sent / SECONDS_RANGE) > MAX_MESSAGES_PER_SECOND
