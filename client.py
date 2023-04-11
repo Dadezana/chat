@@ -9,6 +9,8 @@ import rsa
 
 class UserBannedException(Exception):
     pass
+class KeyExchangeFailed(Exception):
+    pass
 
 global users
 users = []
@@ -143,8 +145,15 @@ def exchange_keys():
     global public_key, private_key, server_key, s, RSA_KEY_LEN
     
     public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
+    try:
+        server_key = rsa.PublicKey.load_pkcs1( s.recv(RSA_KEY_LEN) )
+    
+    except:
+        return False
 
-    server_key = rsa.PublicKey.load_pkcs1( s.recv(RSA_KEY_LEN) )
+    s.sendall( public_key.save_pkcs1() )
+    return True
+
 
 def connect_to_server():
     HOST = '127.0.0.1'    # The remote host
@@ -156,7 +165,8 @@ def connect_to_server():
     try:
         s.connect((HOST, PORT))
 
-        exchange_keys()
+        if not exchange_keys():
+            raise KeyExchangeFailed()
 
         command, *data = receive_message().split(",")    # if not banned it contains the users
         if command == "/ban":
@@ -170,6 +180,9 @@ def connect_to_server():
         print(colored("[-] You have been banned from the server", "red"))
         return False
     
+    except KeyExchangeFailed:
+        print(colored("[-] Failed to exchange keys", "red"))
+        return False
 
     global users
     users = list(user for user in data)
