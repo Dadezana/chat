@@ -48,6 +48,48 @@ def target_handler():
                 except OSError:
                     cmd = "exit"
 
+        elif cmd == "help":
+            print("\t\t\tPrint connected users \r ls -")
+            print("\t\t\t Select user number n \r select <n> -")
+            print("\t\t\t Send message to user u \r send <msg> <u> -")
+            print("\t\t\t Print this guide \r help -")
+
+        elif cmd.startswith("send "):
+
+            msg = " ".join( cmd.split(" ")[1:-1] )
+
+            try:
+                user = cmd.split(" ")[-1]
+
+                if user == "*":
+                    broadcast_clients("admin", msg)
+                    print(f"Sent\n {msg} \nto everyone")
+                    continue
+                
+                user_num = int(user)
+
+                if user_num >= len(clients):
+                    print("This user does not exists")
+                    continue
+
+                target = clients[user_num]
+
+            except ValueError:
+                target, i = None, 0
+
+                for client in clients:
+                    if client["nickname"] == user:
+                        target = clients[i]
+                        break
+                    i += 1
+
+                if target == None:
+                    print("Invalid selection")
+                    continue
+
+            send_message("admin," + msg, target)
+
+# Send message to specified client
 def send_message(data, client):
     client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
 
@@ -99,6 +141,8 @@ def handle_connection(client : dict, conn : socket.socket = None):
                 #     colored(f"\r{nickname}:\n", "white"),
                 #     end=""
                 # )
+                with open("msg.txt", "a") as log_file:
+                    log_file.write(f"\t\t\t\t{data}\r{nickname}:\n")
                 
                 # send message to all clients. All clients will print their own sent messages by themselves
                 broadcast_clients(nickname, data, [client])
