@@ -62,7 +62,7 @@ def target_handler():
             print("\t\t\t Show banned user \r show banned")
             print("\t\t\t Ban specified user \r ban <user>")
             print("\t\t\t Unban user_num \r unban <user_num>")
-            print("\t\t\t Terminate the server \r stop_server")
+            print("\t\t\t Terminate the server \r stop server")
             print("\t\t\t Print this guide \r help")
 
         elif cmd.startswith("send "):
@@ -95,7 +95,7 @@ def target_handler():
             
             send_message("admin," + msg, target)
         
-        elif cmd == "stop_server":
+        elif cmd == "stop server":
             stop_server = True
             return
         
