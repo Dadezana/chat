@@ -141,7 +141,7 @@ def handle_window():
                 Thread(target=send_message, args=(data,)).start()
             
     win.close()
-    
+
 
 def exchange_keys():
     global public_key, private_key, server_key, s, RSA_KEY_LEN
@@ -154,6 +154,7 @@ def exchange_keys():
         return False
 
     s.sendall( public_key.save_pkcs1() )
+    send_message(s.getsockname()[0])
     return True
 
 
@@ -166,7 +167,6 @@ def connect_to_server():
         
     try:
         s.connect((HOST, PORT))
-
         if not exchange_keys():
             raise KeyExchangeFailed()
 
@@ -203,6 +203,9 @@ def send_nickname():
 
     global nickname
     nickname = simpledialog.askstring("Nickname", "Enter your nickname: ", parent=msg)
+    if nickname == None:
+        send_message("/None")
+        return False
 
     send_message(nickname)
     res = receive_message()

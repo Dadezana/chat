@@ -59,7 +59,7 @@ def target_handler():
             print("\t\t\t Send message to user \r send <msg> <user>")
             print("\t\t\t Print this guide \r help")
             print("\t\t\t Terminate the server \r stop_server")
-            print("\t\t\t Terminate the server \r ban <user>")
+            print("\t\t\t Ban user \r ban specified <user>")
 
         elif cmd.startswith("send "):
 
@@ -133,7 +133,14 @@ def handle_connection(client : dict, conn : socket.socket = None):
     addr = client["addr"]
     conn.settimeout(None)
 
-    nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+    try:
+        nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+        if nickname == "/None":     # "/None" means operation aborted
+            raise Exception()
+    except Exception:
+        remove_client(client)
+        conn.close()
+        return
 
     if not is_nickname_valid(nickname):
         send_message("/invalid_nickname", client)
@@ -158,7 +165,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
         while not stop_server:
             try:
                 data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')    # 128 max bytes decryptable with 1024 rsa key
-            except TimeoutError:
+            except (TimeoutError, socket.timeout):
                 if client["banned"]:
                     data = "random"
                 else:
@@ -174,7 +181,9 @@ def handle_connection(client : dict, conn : socket.socket = None):
 
             # Check for number of messages sent within SECONDS_RANGE seconds
             if is_spam( client["num_msg_sent"] ) or client["banned"]:
-                banned_ips.append(str(addr[0]))
+                banned_ips.append( tuple(
+                    (addr[0],  client["private_addr"])
+                ))
                 broadcast_clients("/ban", nickname)
                 print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
                 raise Exception()
@@ -240,11 +249,14 @@ def exchange_keys(conn : socket.socket):
 
     conn.sendall( public_key.save_pkcs1() )
     client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
+
+    private_ip = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
     
     client = {
         "conn": conn,
         "addr": None,
-        "nickname": "",     # nickname is defined in handle_connection()
+        "private_addr": private_ip,
+        "nickname": "",                 # nickname is defined in handle_connection()
         "key": client_key,
         "num_msg_sent": 0,
         "banned": False
@@ -287,7 +299,7 @@ def main():
             while not stop_server:
                 try:
                     conn, addr = s.accept()
-                except TimeoutError:
+                except (TimeoutError, socket.timeout):
                     continue
 
                 conn.sendall( public_key.save_pkcs1() )
@@ -295,15 +307,14 @@ def main():
                 exchange_keys(conn)
                 client = clients[-1]
 
-                if str(addr[0]) in banned_ips:
-                    # conn.sendall( rsa.encrypt(b"/ban", public_key) )
+                if tuple((addr[0], client["private_addr"])) in banned_ips:
                     send_message("/ban", client)
                     conn.close()
                     continue
 
                 client["addr"] = addr
                 data = "/new_user," + ",".join(users)
-                conn.sendall( rsa.encrypt(data.encode(), client["key"]) )
+                send_message(data, client)
 
                 Thread(target=handle_connection, args=(client,)).start()
         
