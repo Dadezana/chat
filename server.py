@@ -8,24 +8,26 @@ SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
 
 def target_handler():
-    global clients, stop_server
+    global clients, stop_server, banned_ips
     while True:
-        cmd = input("\n$: ")
+        cmd = input("\n$: ").strip()
 
         if len(cmd) == 0:
             continue 
 
         if cmd == "ls":
+            i = -1
             for i in range(len(clients)):
                 client = clients[i]
                 print(f"{i}. {client['nickname']} - {client['addr'][0]}:{client['addr'][1]}")
+            print(f" -- {i+1} hosts connected --")
         
         elif cmd.startswith("select "):
             user = cmd.split(" ")[-1]
             try:
                 user_num = int(user)
                 if user_num >= len(clients):
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
 
                 target = clients[user_num]
@@ -39,7 +41,7 @@ def target_handler():
                     i += 1
 
                 if target == None:
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
 
             while cmd != "exit":
@@ -57,9 +59,11 @@ def target_handler():
             print("\t\t\t Print connected users \r ls")
             print("\t\t\t Select user number 'num' \r select <num>")
             print("\t\t\t Send message to user \r send <msg> <user>")
-            print("\t\t\t Print this guide \r help")
+            print("\t\t\t Show banned user \r show banned")
+            print("\t\t\t Ban specified user \r ban <user>")
+            print("\t\t\t Unban user_num \r unban <user_num>")
             print("\t\t\t Terminate the server \r stop_server")
-            print("\t\t\t Ban user \r ban specified <user>")
+            print("\t\t\t Print this guide \r help")
 
         elif cmd.startswith("send "):
 
@@ -72,7 +76,7 @@ def target_handler():
             try:
                 user_num = int(user)
                 if user_num >= len(clients):
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
 
                 target = clients[user_num]
@@ -86,7 +90,7 @@ def target_handler():
                     i += 1
 
                 if target == None:
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
             
             send_message("admin," + msg, target)
@@ -100,7 +104,7 @@ def target_handler():
             try:
                 user_num = int(user)
                 if user_num >= len(clients):
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
 
                 target = clients[user_num]
@@ -114,12 +118,29 @@ def target_handler():
                     i += 1
 
                 if target == None:
-                    print("This user does not exists")
+                    print("-> This user does not exists")
                     continue
 
             target["banned"] = True
 
-
+        elif cmd == "show banned":
+            i = -1
+            for i in range(len(banned_ips)):
+                print(f"{i}. {banned_ips[i][0]} / {banned_ips[i][1]}")
+            print(f" -- {i+1} hosts banned --")
+            
+        elif cmd.startswith("unban "):
+            num = cmd.split(" ")[-1]
+            try:
+                num = int(num)
+                if num > len(banned_ips):
+                    print("-> Selection not valid")
+                    continue
+                ip_to_unban = banned_ips[num]
+                banned_ips.remove(ip_to_unban)
+                print(f"Unbanned {ip_to_unban[0]} / {ip_to_unban[1]}")
+            except ValueError:
+                print("-> Selection not valid. Make sure to specify a number")
 
 
 # Send message to specified client
@@ -160,7 +181,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
     conn.settimeout(1)
     
     try:
-        print(colored(f'[+] {addr} - {nickname} connected', "green"))
+        print(colored(f'[+] {addr} - {nickname} connected', "green"), "\n$: ", end="")
         # Wait for messages
         while not stop_server:
             try:
@@ -200,7 +221,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
     remove_client(client)
     conn.close()
     broadcast_clients("/user_left", nickname, [conn])
-    print(colored(f'[-] {addr} - {nickname} disconnected', "red"))
+    print(colored(f'[-] {addr} - {nickname} disconnected', "red"), "\n$: ", end="")
     return
 
 def is_nickname_valid(nick : str):
