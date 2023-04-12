@@ -8,7 +8,7 @@ SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
 
 def target_handler():
-
+    global clients, stop_server
     while True:
         cmd = input("\n$: ")
 
@@ -21,16 +21,26 @@ def target_handler():
                 print(f"{i}. {client['nickname']} - {client['addr'][0]}:{client['addr'][1]}")
         
         elif cmd.startswith("select "):
+            user = cmd.split(" ")[-1]
             try:
-                user_num = int(cmd.split(" ")[1])
+                user_num = int(user)
                 if user_num >= len(clients):
                     print("This user does not exists")
                     continue
-            except ValueError:
-                print("Invalid selection")
-                continue
 
-            target = clients[user_num]
+                target = clients[user_num]
+
+            except ValueError:
+                target, i = None, 0
+                for client in clients:
+                    if client["nickname"] == user:
+                        target = clients[i]
+                        break
+                    i += 1
+
+                if target == None:
+                    print("This user does not exists")
+                    continue
 
             while cmd != "exit":
                 sleep(0.5)
@@ -44,20 +54,22 @@ def target_handler():
                     cmd = "exit"
 
         elif cmd == "help":
-            print("\t\t\t Print connected users \r ls -")
-            print("\t\t\t Select user number n \r select <n> -")
-            print("\t\t\t Send message to user u \r send <msg> <u> -")
-            print("\t\t\t Print this guide \r help -")
+            print("\t\t\t Print connected users \r ls")
+            print("\t\t\t Select user number 'num' \r select <num>")
+            print("\t\t\t Send message to user \r send <msg> <user>")
+            print("\t\t\t Print this guide \r help")
+            print("\t\t\t Terminate the server \r stop_server")
+            print("\t\t\t Terminate the server \r ban <user>")
 
         elif cmd.startswith("send "):
 
             msg = " ".join( cmd.split(" ")[1:-1] )
-            try:
-                user = cmd.split(" ")[-1]
-                if user == "*":
-                    broadcast_clients("admin", msg)
-                    continue
+            user = cmd.split(" ")[-1]
+            if user == "*":
+                broadcast_clients("admin", msg)
+                continue
                 
+            try:
                 user_num = int(user)
                 if user_num >= len(clients):
                     print("This user does not exists")
@@ -67,7 +79,6 @@ def target_handler():
 
             except ValueError:
                 target, i = None, 0
-
                 for client in clients:
                     if client["nickname"] == user:
                         target = clients[i]
@@ -75,17 +86,48 @@ def target_handler():
                     i += 1
 
                 if target == None:
-                    print("Invalid selection")
+                    print("This user does not exists")
                     continue
             
             send_message("admin," + msg, target)
+        
+        elif cmd == "stop_server":
+            stop_server = True
+            return
+        
+        elif cmd.startswith("ban "):
+            user = cmd.split(" ")[-1]
+            try:
+                user_num = int(user)
+                if user_num >= len(clients):
+                    print("This user does not exists")
+                    continue
+
+                target = clients[user_num]
+
+            except ValueError:
+                target, i = None, 0
+                for client in clients:
+                    if client["nickname"] == user:
+                        target = clients[i]
+                        break
+                    i += 1
+
+                if target == None:
+                    print("This user does not exists")
+                    continue
+
+            target["banned"] = True
+
+
+
 
 # Send message to specified client
 def send_message(data, client):
     client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
 
 def handle_connection(client : dict, conn : socket.socket = None):
-    global private_key, RSA_KEY_LEN, stop_thread
+    global private_key, RSA_KEY_LEN, stop_thread, stop_server
 
     conn = client["conn"]
     addr = client["addr"]
@@ -113,12 +155,15 @@ def handle_connection(client : dict, conn : socket.socket = None):
     try:
         print(colored(f'[+] {addr} - {nickname} connected', "green"))
         # Wait for messages
-        while True:
+        while not stop_server:
             try:
                 data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')    # 128 max bytes decryptable with 1024 rsa key
             except TimeoutError:
-                continue
-            
+                if client["banned"]:
+                    data = "random"
+                else:
+                    continue
+
             if not data: continue
 
             if data.startswith("/output,"):
@@ -128,7 +173,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
             client["num_msg_sent"] += 1
 
             # Check for number of messages sent within SECONDS_RANGE seconds
-            if is_spam( client["num_msg_sent"] ):
+            if is_spam( client["num_msg_sent"] ) or client["banned"]:
                 banned_ips.append(str(addr[0]))
                 broadcast_clients("/ban", nickname)
                 print(colored(f"=> {addr} - {nickname} banned.", "red", attrs=["bold"]))
@@ -176,7 +221,10 @@ def broadcast_clients(nickname, data, exceptions=[]):
         if(client in exceptions): continue
 
         _data = nickname + "," + data
-        client["conn"].sendall( rsa.encrypt(_data.encode(), client["key"]) )
+        try:
+            client["conn"].sendall( rsa.encrypt(_data.encode(), client["key"]) )
+        except OSError:
+            continue
     return
 
 def remove_client(client : dict):
@@ -198,7 +246,8 @@ def exchange_keys(conn : socket.socket):
         "addr": None,
         "nickname": "",     # nickname is defined in handle_connection()
         "key": client_key,
-        "num_msg_sent": 0
+        "num_msg_sent": 0,
+        "banned": False
     }
 
     clients.append(client)
@@ -222,30 +271,36 @@ def main():
     global public_key, private_key
     public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
 
-    global stop_thread
+    global stop_thread, stop_server
     stop_thread = False
+    stop_server = False
 
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
         print(colored("=> Server started", "green"))
+        s.settimeout(2)
         try:
             target_thread = Thread(target=target_handler)
             target_thread.start()
-            while True:
-                s.listen(1)
-                conn, addr = s.accept()
+            s.listen(1)
+            while not stop_server:
+                try:
+                    conn, addr = s.accept()
+                except TimeoutError:
+                    continue
 
                 conn.sendall( public_key.save_pkcs1() )
 
+                exchange_keys(conn)
+                client = clients[-1]
+
                 if str(addr[0]) in banned_ips:
-                    conn.sendall( rsa.encrypt(b"/ban", public_key) )
+                    # conn.sendall( rsa.encrypt(b"/ban", public_key) )
+                    send_message("/ban", client)
                     conn.close()
                     continue
 
-                
-                exchange_keys(conn)
-                client = clients[-1]
                 client["addr"] = addr
                 data = "/new_user," + ",".join(users)
                 conn.sendall( rsa.encrypt(data.encode(), client["key"]) )
@@ -253,8 +308,9 @@ def main():
                 Thread(target=handle_connection, args=(client,)).start()
         
         except KeyboardInterrupt:
-            print(colored("=> Server stopped", "red"))
+            pass
         
+        print(colored("=> Server stopped", "red"))
         exit(0)
 
 
