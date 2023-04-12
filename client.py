@@ -24,7 +24,7 @@ def listen_for_messages(s : socket.socket):
     while not exit_app:
         try:
             t_nickname, *data = receive_message().split(",")
-            data = "".join(data)
+            data = ",".join(data)
         except Exception as e:
             continue
 
@@ -33,7 +33,9 @@ def listen_for_messages(s : socket.socket):
             banned = True
             nick = "You have" if data == nickname else f"{data} has"
             win["-CHAT HISTORY-"].update(f"=> {nick} been banned from the server\n", text_color_for_value="red", append=True)
-            return
+            if data == nickname:
+                return
+            continue
         
         # /new_user will always contain max 1 user
         if t_nickname == "/new_user":            
@@ -184,6 +186,10 @@ def connect_to_server():
         print(colored("[-] Failed to exchange keys", "red"))
         return False
 
+    except rsa.DecryptionError:
+        print(colored("[-] Failed to decrypt message from server", "red"))
+        return False
+
     global users
     users = list(user for user in data)
     if users[0] == '':
@@ -226,7 +232,8 @@ def send_message(msg):
 
 def receive_message():
     global s, private_key
-    return rsa.decrypt(s.recv(1024), private_key).decode('utf-8', errors='ignore')
+    recv = s.recv(1024)
+    return rsa.decrypt(recv, private_key).decode('utf-8', errors='ignore')
 
 def main():
     global exit_app
