@@ -3,6 +3,8 @@ from termcolor import colored
 from threading import Thread
 from time import sleep
 import rsa
+import subprocess, os
+from datetime import datetime
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -59,10 +61,12 @@ def target_handler():
             print("\t\t\t Print connected users \r ls")
             print("\t\t\t Select user number 'num' \r select <num>")
             print("\t\t\t Send message to user \r send <msg> <user>")
+            print("\t\t\t Show the last [n] messages sent by users \r show history [n]")
             print("\t\t\t Show banned user \r show banned")
             print("\t\t\t Ban specified user \r ban <user>")
             print("\t\t\t Unban user_num \r unban <user_num>")
-            print("\t\t\t Terminate the server \r stop server")
+            print("\t\t\t Clear screen \r cls")
+            print("\t\t\t Terminate the server \r poweroff")
             print("\t\t\t Print this guide \r help")
 
         elif cmd.startswith("send "):
@@ -95,7 +99,7 @@ def target_handler():
             
             send_message("admin," + msg, target)
         
-        elif cmd == "stop server":
+        elif cmd == "poweroff":
             stop_server = True
             return
         
@@ -142,6 +146,53 @@ def target_handler():
             except ValueError:
                 print("-> Selection not valid. Make sure to specify a number")
 
+        elif cmd == "cls":
+            try:
+                subprocess.run(["cls"])
+            except FileNotFoundError:
+                subprocess.run(["clear"])
+            except Exception:
+                print("-> Failed to clear screen")
+                continue
+
+            print(colored("=> Server started", "green"))
+
+        elif cmd.startswith("show history"):
+            DEFAULT_LINE_NUM = 30
+            DATE_LEN = 18
+            lines_to_show = cmd.split(" ")[-1]
+
+            try:
+                lines_to_show = int(lines_to_show)
+            except ValueError:
+                lines_to_show = DEFAULT_LINE_NUM
+
+            if not os.path.exists("msg.txt"):
+                print(" -- No messages sent --")
+                continue
+
+            with open("msg.txt", "r") as log_file:
+                history = log_file.readlines()
+
+                if history == None or len(history) == 0:
+                    print(" -- No messages sent --")
+                    continue
+                
+                history = list( reversed(history) )
+                # If the number of lines we want to see is greater than the number of lines of the file, we need to truncate it
+                if len(history) > lines_to_show:
+                    history = history[:lines_to_show]
+                
+                for h in history:
+                    time = h[:DATE_LEN]
+                    h = h[DATE_LEN:]
+                    nick, *msg = h.split(":")
+                    msg = "".join(msg)
+
+                    print(
+                        colored(f"\t\t\t\t  {msg.strip()}", "yellow"),
+                        colored(f"\r {time}", "white", attrs=["dark"]) + colored(f" {nick.strip()}:", "white")
+                    )
 
 # Send message to specified client
 def send_message(data, client):
@@ -210,7 +261,8 @@ def handle_connection(client : dict, conn : socket.socket = None):
                 raise Exception()
             
             with open("msg.txt", "a") as log_file:
-                log_file.write(f"{nickname}: \t{data}\n")
+                time = str(datetime.now())[:-10]        # -10 to remove seconds and milliseconds
+                log_file.write(f"[{time}] {nickname}:{data}\n")
             
             # send message to all clients. All clients will print their own sent messages by themselves
             broadcast_clients(nickname, data, [client])
