@@ -94,13 +94,20 @@ def create_window():
             sg.Listbox(users, key="-USERS-", size=(15, CHAT_HEIGHT), no_scrollbar=True),
         ]
     ]
-
-    input_row = [
-        [
-            sg.InputText(size=(CHAT_WIDTH+5, 2), key="-CHAT INPUT-", do_not_clear=False, focus=True),
-            sg.Button(key="-SEND-", enable_events=True, image_filename="send.png", image_size=(BUTTON_WIDTH, BUTTON_HEIGHT), button_color="#C4E200")
+    if os.path.exists("send.png"):
+        input_row = [
+            [
+                sg.InputText(size=(CHAT_WIDTH+5, 2), key="-CHAT INPUT-", do_not_clear=False, focus=True),
+                sg.Button(key="-SEND-", enable_events=True, image_filename="send.png", image_size=(BUTTON_WIDTH, BUTTON_HEIGHT), button_color="#C4E200")
+            ]
         ]
-    ]
+    else:
+        input_row = [
+            [
+                sg.InputText(size=(CHAT_WIDTH+5, 2), key="-CHAT INPUT-", do_not_clear=False, focus=True),
+                sg.Button(key="-SEND-", enable_events=True, button_text="->", button_color="black on #C4E200"),
+            ]
+        ]
 
     layout = [
         [chat_row],
