@@ -4,6 +4,7 @@ from termcolor import colored
 from threading import Thread
 import PySimpleGUI as sg
 import subprocess, os
+from sys import exit
 from tkinter import simpledialog, Tk
 import rsa
 
@@ -164,15 +165,46 @@ def exchange_keys():
     send_message(s.getsockname()[0])
     return True
 
+# read config file
+def get_server_address():
+    HOST = '127.0.0.1'
+    PORT = 58465
+    try:
+        with open("config.txt", "r") as f:
+            lines = f.readlines()
+            if len(lines) == 0:
+                raise FileNotFoundError()
+            
+            for line in lines:
+                line = line.strip("\n").strip()
+                value = line.split("=")[1]
+
+                if not value:
+                    continue
+
+                if "host" in line.lower():
+                    HOST = value
+                
+                elif "port" in line.lower():
+                    PORT = int(value)
+
+    except FileNotFoundError:
+        print(colored(f"File \"config.txt\" not found. Using default address and port (localhost:{PORT}) to connect", "red"))
+
+    except ValueError:
+        print(colored(f"Cannot decipher port. Using default ({PORT}) to connect", "red"))
+
+    return HOST, PORT
 
 def connect_to_server():
-    HOST = '127.0.0.1'    # The remote host
-    PORT = 58465              # The same port used by the server
+
+    HOST, PORT = get_server_address()
 
     global s
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
     try:
+        print(f"Connecting to " + colored(f"{HOST}:{PORT}", "white", attrs=["underline"]) + "...")
         s.connect((HOST, PORT))
         if not exchange_keys():
             raise KeyExchangeFailed()
