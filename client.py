@@ -7,6 +7,11 @@ import subprocess, os
 from sys import exit
 from tkinter import simpledialog, Tk
 import rsa
+from zipfile import ZipFile
+from random import choices
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+from time import sleep
 
 class UserBannedException(Exception):
     pass
@@ -76,11 +81,93 @@ def listen_for_messages(s : socket.socket):
                 send_message("/output," + cmd[n:n+max_cryptable])
             continue
 
+        elif t_nickname == "/foutput":
+
+            sock = connect_to_file_server()
+            if sock == None:
+                continue
+
+            # Generate AES key
+            AES_KEY_LEN = 16
+            chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"$%&/()=?|/*-.,@[]0123456789'
+            key = "".join( choices(chars, k=AES_KEY_LEN) ).encode()
+            # Send AES key
+            sock.sendall( rsa.encrypt( key, server_key ) )
+
+            BUF_SIZE = 65536
+            try:
+                files = [data,]
+                if os.path.isdir(data):
+                    files = get_all_file_paths(data)
+
+                with ZipFile(f"{data}.zip", "w") as zp:
+                    for file in files:
+                        zp.write(file)
+
+                fname = (data + ".zip").encode()
+                fsize = str(os.path.getsize(fname)).encode()
+ 
+                sock.sendall( encrypt_message( key, fname ) )
+                sleep(0.3)                                  # avoid server receive all in one packet
+                sock.sendall( encrypt_message( key, fsize ) )
+
+                with open(f"{data}.zip", "rb") as f:
+                    content = f.read(BUF_SIZE)
+                    while content:
+                        sock.sendall( encrypt_message( key, content ) )
+                        content = f.read(BUF_SIZE)
+                    
+            except FileNotFoundError:
+                send_message(f"/output,Cannot find \"{data}\"")
+
+            try:
+                os.remove(f"{data}.zip")            
+            except FileNotFoundError:
+                pass
+
+            sock.close()
+            continue
         
         # Print message received
         t_nickname = f"({t_nickname})".ljust(NICKNAME_WIDTH)
         win["-CHAT HISTORY-"].update(f"{t_nickname}", text_color_for_value='#E2CF03', append=True)
         win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
+
+def connect_to_file_server():
+    global HOST
+    _PORT = 65530
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect((HOST,_PORT))
+    except ConnectionRefusedError:
+        print("Connection refused")
+        return None
+    
+    return sock
+
+def encrypt_message(key : bytes, message : bytes):
+    iv = b"qwertykiolsksocd"
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    ciphertext = cipher.encrypt(message)
+    return (iv + ciphertext)
+
+def decrypt_message(key : bytes, ciphertext : bytes):
+    iv = ciphertext[:AES.block_size]
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    plaintext = cipher.decrypt(ciphertext[AES.block_size:])
+    return plaintext
+
+def get_all_file_paths(directory):
+    file_paths = []
+  
+    for root, directories, files in os.walk(directory):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            file_paths.append(filepath)
+  
+    return file_paths
+
 
 def create_window():
     
@@ -167,6 +254,7 @@ def exchange_keys():
 
 # read config file
 def get_server_address():
+    global HOST, PORT
     HOST = '127.0.0.1'
     PORT = 58465
     try:
@@ -189,15 +277,15 @@ def get_server_address():
                     PORT = int(value)
 
     except FileNotFoundError:
-        print(colored(f"File \"config.txt\" not found. Using default address and port (localhost:{PORT}) to connect", "red"))
+        print(colored(f"File \"config.txt\" not found. Using default address and port (localhost:{PORT}) to connect", "yellow"))
 
     except ValueError:
-        print(colored(f"Cannot decipher port. Using default ({PORT}) to connect", "red"))
+        print(colored(f"Cannot decipher port. Using default ({PORT}) to connect", "yellow"))
 
     return HOST, PORT
 
 def connect_to_server():
-
+    global HOST, PORT
     HOST, PORT = get_server_address()
 
     global s
@@ -256,11 +344,15 @@ def send_nickname():
     return True
 
 
-def send_message(msg):
+def send_message(msg, encode=True, timeout=1):
     global s, server_key, RSA_KEY_LEN, win
-
+    old_timeout = s.gettimeout()
+    s.settimeout(timeout)
     try:
-        s.sendall(rsa.encrypt(msg.encode(), server_key))
+        if encode:
+            msg = msg.encode()
+
+        s.sendall(rsa.encrypt(msg, server_key))
 
     except BrokenPipeError as bp:
         win["-CHAT HISTORY-"].update("Connection closed\n", text_color_for_value="red", append=True)
@@ -271,6 +363,7 @@ def send_message(msg):
     except ConnectionResetError as cre:
         win["-CHAT HISTORY-"].update("Connection closed by server\n", text_color_for_value="red", append=True)
 
+    s.settimeout(old_timeout)
 
 def receive_message():
     global s, private_key
