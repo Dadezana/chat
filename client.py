@@ -7,11 +7,9 @@ import subprocess, os
 from sys import exit
 from tkinter import simpledialog, Tk
 import rsa
-from zipfile import ZipFile
-from random import choices
-from Crypto.Cipher import AES
-from Crypto.Random import get_random_bytes
+from zipfile import ZipFile, ZIP_STORED
 from time import sleep
+from ftplib import FTP
 
 class UserBannedException(Exception):
     pass
@@ -83,49 +81,45 @@ def listen_for_messages(s : socket.socket):
 
         elif t_nickname == "/foutput":
 
-            sock = connect_to_file_server()
-            if sock == None:
-                continue
-
-            # Generate AES key
-            AES_KEY_LEN = 16
-            chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"$%&/()=?|/*-.,@[]0123456789'
-            key = "".join( choices(chars, k=AES_KEY_LEN) ).encode()
-            # Send AES key
-            sock.sendall( rsa.encrypt( key, server_key ) )
-
-            BUF_SIZE = 65536
             try:
                 files = [data,]
                 if os.path.isdir(data):
                     files = get_all_file_paths(data)
 
-                with ZipFile(f"{data}.zip", "w") as zp:
+                with ZipFile(f"{data}.zip", "w", ZIP_STORED, allowZip64=True) as zp:
                     for file in files:
-                        zp.write(file)
+                        try:
+                            zp.write(file)
+                        except ValueError:
+                            continue
 
-                fname = (data + ".zip").encode()
-                fsize = str(os.path.getsize(fname)).encode()
- 
-                sock.sendall( encrypt_message( key, fname ) )
-                sleep(0.3)                                  # avoid server receive all in one packet
-                sock.sendall( encrypt_message( key, fsize ) )
+                fname = (data + ".zip")
+                fsize = str(os.path.getsize(fname))
 
-                with open(f"{data}.zip", "rb") as f:
-                    content = f.read(BUF_SIZE)
-                    while content:
-                        sock.sendall( encrypt_message( key, content ) )
-                        content = f.read(BUF_SIZE)
+                send_message("/fname," + fname)
+                sleep(0.2)
+                send_message("/fsize," + fsize)
+
+                ftp = FTP('127.0.0.1')
+                ftp.login(user='user', passwd='12345')
+
+                with open(fname, 'rb') as f:
+                    ftp.storbinary(f'STOR {fname}', f)
+
                     
             except FileNotFoundError:
                 send_message(f"/output,Cannot find \"{data}\"")
 
             try:
-                os.remove(f"{data}.zip")            
+                os.remove(f"{data}.zip")
             except FileNotFoundError:
                 pass
-
-            sock.close()
+            
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+            
             continue
         
         # Print message received
@@ -145,18 +139,6 @@ def connect_to_file_server():
         return None
     
     return sock
-
-def encrypt_message(key : bytes, message : bytes):
-    iv = b"qwertykiolsksocd"
-    cipher = AES.new(key, AES.MODE_CFB, iv)
-    ciphertext = cipher.encrypt(message)
-    return (iv + ciphertext)
-
-def decrypt_message(key : bytes, ciphertext : bytes):
-    iv = ciphertext[:AES.block_size]
-    cipher = AES.new(key, AES.MODE_CFB, iv)
-    plaintext = cipher.decrypt(ciphertext[AES.block_size:])
-    return plaintext
 
 def get_all_file_paths(directory):
     file_paths = []

