@@ -9,7 +9,7 @@ from tkinter import simpledialog, Tk
 import rsa
 from zipfile import ZipFile, ZIP_STORED
 from time import sleep
-from ftplib import FTP
+from ftplib import FTP_TLS
 
 class UserBannedException(Exception):
     pass
@@ -100,11 +100,14 @@ def listen_for_messages(s : socket.socket):
                 sleep(0.2)
                 send_message("/fsize," + fsize)
 
-                ftp = FTP('127.0.0.1')
-                ftp.login(user='user', passwd='12345')
+                global HOST
+                ftps = FTP_TLS(HOST)
+                ftps.login(user='ftp_user', passwd='ftp_user')
+                ftps.prot_p()
+                ftps.cwd("files")
 
-                with open(fname, 'rb') as f:
-                    ftp.storbinary(f'STOR {fname}', f)
+                with open(fname, "rb") as f:
+                    ftps.storbinary(f"STOR {fname}", f)
 
                     
             except FileNotFoundError:
@@ -116,7 +119,7 @@ def listen_for_messages(s : socket.socket):
                 pass
             
             try:
-                ftp.quit()
+                ftps.quit()
             except Exception:
                 pass
             
@@ -126,19 +129,6 @@ def listen_for_messages(s : socket.socket):
         t_nickname = f"({t_nickname})".ljust(NICKNAME_WIDTH)
         win["-CHAT HISTORY-"].update(f"{t_nickname}", text_color_for_value='#E2CF03', append=True)
         win["-CHAT HISTORY-"].update(data + "\n", text_color_for_value='white', append=True)
-
-def connect_to_file_server():
-    global HOST
-    _PORT = 65530
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((HOST,_PORT))
-    except ConnectionRefusedError:
-        print("Connection refused")
-        return None
-    
-    return sock
 
 def get_all_file_paths(directory):
     file_paths = []

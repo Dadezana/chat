@@ -5,10 +5,6 @@ from time import sleep
 import rsa
 import subprocess, os
 from datetime import datetime
-from pyftpdlib.authorizers import DummyAuthorizer
-from pyftpdlib.handlers import FTPHandler
-from pyftpdlib.servers import FTPServer
-import logging
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -208,32 +204,7 @@ def target_handler():
                     )
 
 
-
-def wait_for_files():
-    logging.basicConfig(filename='pyftpdlib.log', level=logging.INFO)
-    try:
-        authorizer = DummyAuthorizer()
-        authorizer.add_user("user", "12345", "downloads/", perm="w")
-        authorizer.add_anonymous("downloads/")
-
-        handler = FTPHandler
-        handler.authorizer = authorizer
-
-        server = FTPServer(("127.0.0.1", 21), handler)
-        
-    except OSError as e:
-        print(colored("\r-> Server must be run as root in order to open ftp connections\n$: "))
-        return
-
-    while not stop_server:
-        try:
-            server.serve_forever(timeout=2)        
-        except TimeoutError:
-            continue
-    return
-
-
-def progress_bar():
+def progress_bar(client):
     global fname, fsize
 
     GB = 1024**3
@@ -264,8 +235,8 @@ def progress_bar():
         sleep(0.1)
         bytes_received = os.path.getsize("downloads/"+fname)
     
-    bar = (f"\r100% |>") + colored("-" * 50, "green") + "<| " + str( int(fsize/unit) ) + f"{UNIT}/" + str(int(fsize/unit)) + f"{UNIT}"
-    print(bar + "\n$: ", end="")
+    bar = (f"\r100% |>") + colored("-" * 50, "green") + "<| " + ( "%.2f" %(fsize/unit) ) + f"{UNIT}/" + ( "%.2f" %(fsize/unit) ) + f"{UNIT}"
+    print(bar + f"\n{client['nickname']}$: ", end="")
 
     return
 
@@ -331,7 +302,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
             elif data.startswith("/fsize,"):
                 try:
                     fsize = int( data[7:] )
-                    bar_thread = Thread(target=progress_bar)
+                    bar_thread = Thread(target=progress_bar, args=(client,))
                     bar_thread.start()
 
                 except ValueError as ve:
@@ -461,7 +432,6 @@ def main():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
         print(colored("=> Server started", "green"))
-        Thread(target=wait_for_files).start()
         s.settimeout(2)
         try:
             target_thread = Thread(target=target_handler)
