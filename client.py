@@ -10,6 +10,7 @@ import rsa
 from zipfile import ZipFile, ZIP_STORED
 from time import sleep
 from ftplib import FTP_TLS
+from Crypto.Cipher import AES
 
 class UserBannedException(Exception):
     pass
@@ -22,12 +23,12 @@ users = []
 def listen_for_messages(s : socket.socket):
     s.settimeout(1)
 
-    global users, private_key
+    global users
     win["-USERS-"].update(users)
 
     while not exit_app:
         try:
-            t_nickname, *data = receive_message().split(",")
+            t_nickname, *data = recv_message().split(",")
             data = ",".join(data)
         except Exception as e:
             continue
@@ -211,7 +212,7 @@ def handle_window():
 
 
 def exchange_keys():
-    global public_key, private_key, server_key, s, RSA_KEY_LEN
+    global server_key, s, RSA_KEY_LEN, aes_key
     
     public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
     try:
@@ -221,6 +222,8 @@ def exchange_keys():
         return False
 
     s.sendall( public_key.save_pkcs1() )
+    aes_key = rsa.decrypt( s.recv(1024), private_key )
+
     send_message(s.getsockname()[0])
     return True
 
@@ -269,7 +272,7 @@ def connect_to_server():
         if not exchange_keys():
             raise KeyExchangeFailed()
 
-        command, *data = receive_message().split(",")    # if not banned it contains the users
+        command, *data = recv_message().split(",")    # if not banned it contains the users
         if command == "/ban":
             raise UserBannedException()
         
@@ -291,7 +294,11 @@ def connect_to_server():
 
     global users
     users = list(user for user in data)
-    if users[0] == '':
+
+    try:
+        if users[0] == '':
+            users = []
+    except IndexError:
         users = []
 
     return send_nickname()
@@ -307,7 +314,7 @@ def send_nickname():
         return False
 
     send_message(nickname)
-    res = receive_message()
+    res = recv_message()
     
     if res == "/invalid_nick":
         print(colored(f"[-] '{nickname}' is not a valid nickname", "red"))
@@ -316,31 +323,24 @@ def send_nickname():
     return True
 
 
-def send_message(msg, encode=True, timeout=1):
-    global s, server_key, RSA_KEY_LEN, win
-    old_timeout = s.gettimeout()
-    s.settimeout(timeout)
+def send_message(msg, encode=True):
+    global s, win
     try:
         if encode:
             msg = msg.encode()
 
-        s.sendall(rsa.encrypt(msg, server_key))
+        s.sendall( aes_encrypt(msg) )
 
     except BrokenPipeError as bp:
         win["-CHAT HISTORY-"].update("Connection closed\n", text_color_for_value="red", append=True)
-
-    except OverflowError as oe:
-        win["-CHAT HISTORY-"].update("Message too long. Max 110 char allowed\n", text_color_for_value="red", append=True)
     
     except ConnectionResetError as cre:
         win["-CHAT HISTORY-"].update("Connection closed by server\n", text_color_for_value="red", append=True)
 
-    s.settimeout(old_timeout)
-
-def receive_message():
-    global s, private_key
-    recv = s.recv(1024)
-    return rsa.decrypt(recv, private_key).decode('utf-8', errors='ignore')
+def recv_message():
+    global s
+    c_msg = s.recv(1024)
+    return aes_decrypt(c_msg)
 
 def main():
     global exit_app
@@ -364,6 +364,30 @@ def main():
     listen_thread.start()
     handle_window()
 
+
+def aes_encrypt(message : str) -> bytes:
+    global aes_key
+    if "str" in str(type(message)):
+        message = message.encode()
+    # iv = get_random_bytes(AES.block_size)
+    iv = b"fw%SX!ap4#RppDM6"
+    cipher = AES.new(aes_key, AES.MODE_CFB, iv)
+    ciphertext = cipher.encrypt(message)
+    return (iv + ciphertext)
+
+def aes_decrypt(ciphertext : bytes) -> str:
+    global aes_key
+    if "str" in str(type(ciphertext)):
+        ciphertext = ciphertext.encode()
+    #// iv = b"fw%SX!ap4#RppDM6"
+    iv = ciphertext[:AES.block_size]
+    try:
+        cipher = AES.new(aes_key, AES.MODE_CFB, iv)
+    except ValueError:
+        return ""
+    
+    plaintext = cipher.decrypt(ciphertext[AES.block_size:]).decode('utf-8', errors='ignore')
+    return plaintext
 
 if __name__ == '__main__':
     main()

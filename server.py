@@ -5,6 +5,9 @@ from time import sleep
 import rsa
 import subprocess, os
 from datetime import datetime
+from random import choices
+from Crypto.Cipher import AES
+import traceback
 
 SECONDS_RANGE = 5
 MAX_MESSAGES_PER_SECOND = 1   # 5 messages in SECONDS_RANGE seconds
@@ -242,7 +245,7 @@ def progress_bar(client):
 
 # Send message to specified client
 def send_message(data, client):
-    client["conn"].sendall( rsa.encrypt(data.encode(), client["key"]) )
+    client["conn"].sendall( aes_encrypt(data) )
 
 def handle_connection(client : dict, conn : socket.socket = None):
     global private_key, RSA_KEY_LEN, stop_thread, stop_server, fname, fsize
@@ -253,7 +256,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
 
     # --- Wating for nickname
     try:
-        nickname = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+        nickname = recv_message(client)
         if nickname == "/None":     # "/None" means operation aborted
             raise Exception()
     except Exception:
@@ -285,7 +288,7 @@ def handle_connection(client : dict, conn : socket.socket = None):
         while not stop_server:
             try:
                 # keep it bytes to avoid errors when receiving files
-                data = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key)
+                data = recv_message(client)
             except (TimeoutError, socket.timeout):
                 if client["banned"]:
                     data = "random"     # this way the program exits instead of continuing
@@ -293,7 +296,6 @@ def handle_connection(client : dict, conn : socket.socket = None):
                     continue
 
             if not data: continue
-            data = data.decode('utf-8', errors='ignore')
 
             if data.startswith("/fname,"):
                 fname = data[7:]
@@ -331,7 +333,8 @@ def handle_connection(client : dict, conn : socket.socket = None):
             # send message to all clients. All clients will print their own sent messages by themselves
             broadcast_clients(nickname, data, [client])
     except Exception as e:
-        pass
+        with open("exception.txt", "a") as f:
+            traceback.print_exc(file=f)
     
     stop_thread = True
     remove_client(client)
@@ -368,7 +371,7 @@ def broadcast_clients(nickname, data, exceptions=[]):
 
         _data = nickname + "," + data
         try:
-            client["conn"].sendall( rsa.encrypt(_data.encode(), client["key"]) )
+            client["conn"].sendall( aes_encrypt(_data) )
         except OSError:
             continue
     return
@@ -381,14 +384,29 @@ def remove_client(client : dict):
     except:
         pass
 
+def generate_aes_key() -> bytes:
+    chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890_-.,*/?!$&%()'
+    return "".join( choices(chars, k=16) ).encode()
+
+def send_message(data : str, client : dict):
+    ciphered = aes_encrypt(data)
+    client["conn"].sendall( ciphered )
+
+def recv_message(client : dict) -> str:
+    return aes_decrypt( 
+        client["conn"].recv(1024)
+    )
+
 def exchange_keys(conn : socket.socket):
-    global public_key, clients
+    global public_key, clients, aes_key
 
     try:
         conn.sendall( public_key.save_pkcs1() )
         client_key = rsa.PublicKey.load_pkcs1( conn.recv(1024) )
 
-        private_ip = rsa.decrypt(conn.recv(int(RSA_KEY_LEN/8)), private_key).decode('utf-8', errors='ignore')
+        conn.sendall( rsa.encrypt(aes_key, client_key) )
+
+        private_ip = recv_message( {"conn": conn} )
     
     except ConnectionResetError:
         return False
@@ -405,6 +423,26 @@ def exchange_keys(conn : socket.socket):
 
     clients.append(client)
     return True
+
+
+def aes_encrypt(message : str) -> bytes:
+    global aes_key
+    if "str" in str(type(message)):
+        message = message.encode()
+    iv = b"fw%Su!ap6#RppD(6"
+    cipher = AES.new(aes_key, AES.MODE_CFB, iv)
+    ciphertext = cipher.encrypt(message)
+    return (iv + ciphertext)
+
+def aes_decrypt(ciphertext : bytes) -> str:
+    global aes_key
+    if "str" in str(type(ciphertext)):
+        ciphertext = ciphertext.encode()
+    # iv = b"fw%Su!ap6#RppD(6"
+    iv = ciphertext[:AES.block_size]
+    cipher = AES.new(aes_key, AES.MODE_CFB, iv)
+    plaintext = cipher.decrypt(ciphertext[AES.block_size:]).decode('utf-8', errors='ignore')
+    return plaintext
 
 
 def main():
@@ -425,6 +463,9 @@ def main():
     global public_key, private_key
     public_key, private_key = rsa.newkeys(RSA_KEY_LEN)
 
+    global aes_key
+    aes_key = generate_aes_key()
+
     global stop_thread, stop_server
     stop_thread = False
     stop_server = False
@@ -442,8 +483,6 @@ def main():
                     conn, addr = s.accept()
                 except (TimeoutError, socket.timeout):
                     continue
-
-                conn.sendall( public_key.save_pkcs1() )
 
                 if not exchange_keys(conn):
                     continue
